@@ -305,7 +305,7 @@ function renderMap(visible) {
           ${isPick ? `<circle cx="${x}" cy="${y}" r="13" class="map-pick-ring" />` : ''}
           <circle cx="${x}" cy="${y}" r="9.5" class="map-dot badge-fill-${rating ?? 'none'}" />
           <text x="${x}" y="${y + 3.8}" text-anchor="middle" class="map-number badge-text-${rating ?? 'none'}">${rating ?? MISSING}</text>
-          <text x="${x + 15}" y="${y + 4}" class="map-label${isPick ? ' map-label-pick' : ''}">${escapeHtml(spot.name)}</text>
+          <text x="${x + (isPick ? 19 : 15)}" y="${y + 4}" class="map-label${isPick ? ' map-label-pick' : ''}">${escapeHtml(spot.name)}</text>
         </a>`;
     })
     .join('');
