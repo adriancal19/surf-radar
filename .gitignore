@@ -2,6 +2,9 @@
 .env
 .env.*
 
+# Private project plan, kept on this computer only
+PLAN.md
+
 # Editor and system files
 .vscode/
 Thumbs.db
