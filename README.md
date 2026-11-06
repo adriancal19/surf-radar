@@ -6,11 +6,13 @@ A free surf forecast for 17 spots on Florida's east coast, from Cocoa Beach to S
 
 I don't get to surf often, so a wasted trip costs me a lot. I wanted something that tells me the best time to go based on my own preferences, without paying for a subscription.
 
-<p>
-  <img src="docs/screenshots/home.png" width="260" alt="Home page showing the best time to go and spots ranked by rating" />
-  <img src="docs/screenshots/map.png" width="260" alt="Illustrated map of the coast with a rating at each spot" />
-  <img src="docs/screenshots/spot.png" width="260" alt="Spot page with cam links, the current forecast and the nearest buoy reading" />
-</p>
+<table>
+  <tr>
+    <td valign="top"><img src="docs/screenshots/home.png" width="190" alt="Home page showing the best time to go and spots ranked by rating" /></td>
+    <td valign="top"><img src="docs/screenshots/map.png" width="190" alt="Illustrated map of the coast with a rating at each spot" /></td>
+    <td valign="top"><img src="docs/screenshots/spot.png" width="190" alt="Spot page with cam links, the current forecast and the nearest buoy reading" /></td>
+  </tr>
+</table>
 
 ## What it does
 
