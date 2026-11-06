@@ -273,7 +273,7 @@ function buoyExplanation(spot) {
   const { fadeHours, maxAgeHours } = settings.buoyCorrection;
   if (!bias) return `No reading in the last ${maxAgeHours} hours, so the forecast isn't adjusted.`;
   const percent = Math.round((spot.nowFactor - 1) * 100);
-  const comparison = `Models read ${formatFt(bias.modelFt)} at this buoy, against ${formatFt(bias.measuredFt)} measured.`;
+  const comparison = `Models read ${formatFt(bias.modelFt)} at this buoy, against a recent average of ${formatFt(bias.measuredFt)} measured.`;
   if (Math.abs(percent) < 3) return `${comparison} That's close, so this forecast barely changes.`;
   const direction = percent < 0 ? 'down' : 'up';
   return `${comparison} This forecast is adjusted ${direction} ${Math.abs(percent)}% now, fading out over ${fadeHours} hours.`;
