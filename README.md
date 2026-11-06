@@ -26,15 +26,21 @@ I don't get to surf often, so a wasted trip costs me a lot. I wanted something t
 
 ## How it works
 
-```mermaid
-flowchart LR
-    A[Three wave models] --> B[Blend: middle value]
-    B --> C[Buoy correction]
-    D[NOAA buoys] --> E[Hourly GitHub job] --> C
-    C --> F[Rate each time of day]
-    F --> G[Website]
-    F --> H[Daily alert email]
-    I[Hurricane Center] --> J[Hourly GitHub job] --> G
+```text
+Three wave models
+       |
+       v
+Blend (middle value)
+       |
+       v
+Buoy correction  <---  NOAA buoys  (saved hourly by a GitHub job)
+       |
+       v
+Rate each time of day
+       |
+       +--> Website  <---  Hurricane Center  (saved hourly by a GitHub job)
+       |
+       +--> Daily alert email
 ```
 
 There's no server. The site is plain HTML, CSS and JavaScript on GitHub Pages, and your browser pulls the forecast directly from Open-Meteo. NOAA's buoy and hurricane feeds can't be read from a browser, so scheduled GitHub Actions save them as small data files on a separate branch. Everything runs on free tiers.
