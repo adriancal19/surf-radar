@@ -1,7 +1,7 @@
-name: Fetch buoy data
+name: Fetch buoy and storm data
 
-# NDBC can't be read directly from a browser, so this saves the readings for the site.
-# They go on their own branch, replaced each time, so code history stays clean and the
+# NDBC and NHC can't be read directly from a browser, so this saves their data for the site.
+# It goes on its own branch, replaced each time, so code history stays clean and the
 # site doesn't rebuild every hour.
 
 on:
@@ -22,8 +22,13 @@ jobs:
         with:
           node-version: 22
 
-      - name: Fetch readings
+      - name: Fetch buoy readings
         run: node scripts/fetch-buoys.js buoy-data/buoys.json
+
+      # A storm feed problem shouldn't stop the buoy data. The site treats a missing file as no flags.
+      - name: Fetch tropical systems
+        continue-on-error: true
+        run: node scripts/fetch-tropical.js buoy-data/tropical.json
 
       - name: Publish to the buoy-data branch
         working-directory: buoy-data
@@ -33,6 +38,6 @@ jobs:
           git init -q -b buoy-data
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add buoys.json
-          git commit -q -m 'Update buoy data'
+          git add .
+          git commit -q -m 'Update buoy and storm data'
           git push -q -f "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" buoy-data

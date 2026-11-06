@@ -20,6 +20,8 @@
       import { spots } from '../spots.js';
       import { computeBias, correctionFactor, distanceKm, distanceStrength } from '../src/correction.js';
       import { parseNdbcText } from '../src/sources/ndbc.js';
+      import { flagsForDay, inSwellRegion, parseActiveStorms, parseOutlook } from '../src/sources/nhc.js';
+      import { buildSurfEmail, buildTropicalEmail, findSurfAlerts, findTropicalAlerts, markSent, pruneSent } from '../src/alerts.js';
       import { blendValues, blendReadings } from '../src/blend.js';
       import { confidenceLabel, HIGH, MEDIUM, LOW } from '../src/confidence.js';
       import { averageDirection, buildBuoyStatus, buildSpotForecast, localHourKey } from '../src/pipeline.js';
@@ -311,6 +313,91 @@
       same('buoys: too far away means no adjustment', buildSpotForecast(farAway, data, settings, '2026-11-06T07:00', status).days[0].final.morning.waveHeightFt, 4);
 
       check('buoys: every spot has a known buoy', spots.every((spot) => buoys.some((buoy) => buoy.id === spot.buoyId)));
+
+      // --- Tropical ---
+      same('tropical: the western Atlantic counts', inSwellRegion(26, -70), true);
+      same('tropical: the Caribbean counts', inSwellRegion(16, -80), true);
+      same('tropical: the Gulf does not count', inSwellRegion(26, -88), false);
+      same('tropical: the far eastern Atlantic does not count', inSwellRegion(15, -30), false);
+
+      // Shape taken from NHC's published sample file.
+      const stormFeed = { activeStorms: [
+        { id: 'al062023', name: 'Gert', classification: 'HU', latitude: '17.1N', longitude: '58.4W', latitudeNumeric: 17.1, longitudeNumeric: -58.4 },
+        { id: 'al072023', name: 'Gulfy', classification: 'TS', latitude: '26.0N', longitude: '90.0W', latitudeNumeric: 26, longitudeNumeric: -90 },
+        { id: 'ep092023', name: 'Pacific', classification: 'PTC', latitude: '17.0N', longitude: '60.0W', latitudeNumeric: 17, longitudeNumeric: -60 },
+      ] };
+      same('tropical: keeps Atlantic storms in the region', parseActiveStorms(stormFeed).map((storm) => storm.id), ['al062023']);
+      same('tropical: names the storm', parseActiveStorms(stormFeed)[0].name, 'Hurricane Gert');
+      same('tropical: no storms is fine', parseActiveStorms({ activeStorms: [] }), []);
+
+      // Text format taken from the real feed on 2026-11-06.
+      const outlookFeed = (body) => `<channel><title>Outlooks</title><item><title>Atlantic Tropical Weather Outlook</title><description><![CDATA[000<br>Tropical Weather Outlook<br>100 PM EST Fri Nov 6 2026<br><br>For the North Atlantic...Caribbean Sea and the Gulf of America:<br><br>${body}<br>&&<br>Forecaster Reinhart<br><br>]]></description></item><item><title>Eastern Pacific Tropical Weather Outlook</title><description><![CDATA[Eastern Pacific (EP91):<br>Stuff.<br>* Formation chance through 7 days...high...90 percent.<br><br>]]></description></item></channel>`;
+      const area = (place, chance) => `${place}:<br>A low pressure area is producing showers. <br>* Formation chance through 48 hours...low...10 percent.<br>* Formation chance through 7 days...medium...${chance} percent.<br><br>`;
+      same('outlook: keeps a likely system with its chance', parseOutlook(outlookFeed(area('Western Atlantic (AL94)', 60)), 40), [{ id: 'AL94', kind: 'outlook', name: 'Disturbance in the Western Atlantic', chance7Day: 60 }]);
+      same('outlook: ignores an unlikely system', parseOutlook(outlookFeed(area('Western and Central Atlantic (AL94)', 10)), 40), []);
+      same('outlook: exactly the minimum counts', parseOutlook(outlookFeed(area('Caribbean Sea', 40)), 40).length, 1);
+      same('outlook: a system with no number gets an ID from its place', parseOutlook(outlookFeed(area('Southwestern Caribbean Sea', 50)), 40)[0].id, 'southwestern-caribbean-sea');
+      same('outlook: ignores the Gulf', parseOutlook(outlookFeed(area('Gulf of America (AL90)', 80)), 40), []);
+      same('outlook: ignores the eastern Atlantic', parseOutlook(outlookFeed(area('Eastern Tropical Atlantic (AL91)', 80)), 40), []);
+      same('outlook: reads several systems', parseOutlook(outlookFeed(area('Western Atlantic (AL94)', 60) + area('Caribbean Sea (AL95)', 70)), 40).map((system) => system.id), ['AL94', 'AL95']);
+      same('outlook: does not read the Pacific section', parseOutlook(outlookFeed('Tropical cyclone formation is not expected during the next 7 days.<br><br>'), 40), []);
+      same('outlook: reads a near-zero chance', parseOutlook(outlookFeed(area('Caribbean Sea', 'near 0').replace('medium...near 0', 'low...near 0')), 0)[0].chance7Day, 0);
+      let outlookThrew = false;
+      try { parseOutlook('<channel></channel>', 40); } catch { outlookThrew = true; }
+      same('outlook: a broken feed is an error, not "no storms"', outlookThrew, true);
+
+      const storm = { id: 's', kind: 'storm', name: 'Hurricane Gert', position: '17.1N, 58.4W' };
+      const disturbance = { id: 'd', kind: 'outlook', name: 'Disturbance in the Caribbean Sea', chance7Day: 60 };
+      const tropicalRules = settings.tropical;
+      same('tropical: a storm flags today', flagsForDay([storm], 0, tropicalRules).length, 1);
+      same('tropical: a storm flags Day 5', flagsForDay([storm], 5, tropicalRules).length, 1);
+      same('tropical: a storm does not flag Day 6', flagsForDay([storm], 6, tropicalRules).length, 0);
+      same('tropical: a disturbance does not flag today', flagsForDay([disturbance], 0, tropicalRules).length, 0);
+      same('tropical: a disturbance flags Day 3', flagsForDay([disturbance], 3, tropicalRules).length, 1);
+      same('tropical: a disturbance flags Day 7', flagsForDay([disturbance], 7, tropicalRules).length, 1);
+      same('tropical: the flag says what it is', flagsForDay([storm], 1, tropicalRules)[0].text, 'Possible swell: Hurricane Gert');
+      same('tropical: flags reach the forecast days', buildSpotForecast({ id: 'test' }, data, settings, '2026-11-06T07:00', null, [storm]).days[0].flags[0].systemId, 's');
+
+      // --- Alerts ---
+      const alertSlot = (name, rating) => ({ name, rating, confidence: 'High confidence', final: { waveHeightFt: 4.1, swellPeriodS: 8.5 } });
+      const alertDays = (morning, evening) => [0, 1, 2, 3].map((dayIndex) => ({
+        dayIndex,
+        date: `2026-11-1${dayIndex}`,
+        slots: dayIndex === 3
+          ? { morning: alertSlot('morning', morning), midday: alertSlot('midday', 5), evening: alertSlot('evening', evening) }
+          : { morning: alertSlot('morning', 5), midday: alertSlot('midday', 5), evening: alertSlot('evening', 5) },
+      }));
+      const alertSpot = (id, morning, evening, minutes = 60) => ({ id, name: id, driveMinutes: { doral: minutes }, days: alertDays(morning, evening) });
+      const alertKeys = (forecast, sent = {}) => findSurfAlerts(forecast, settings, sent).map((alert) => alert.key);
+
+      same('alerts: a 4 on Day 3 alerts', alertKeys([alertSpot('a', 4, 1)]), ['surf|a|2026-11-13|morning']);
+      same('alerts: a 3 does not', alertKeys([alertSpot('a', 3, 3)]), []);
+      same('alerts: an evening-only day alerts', alertKeys([alertSpot('a', 1, 5)]), ['surf|a|2026-11-13|evening']);
+      same('alerts: morning and evening are separate', alertKeys([alertSpot('a', 4, 4)]).length, 2);
+      same('alerts: midday and other days are ignored', alertKeys([alertSpot('a', 1, 1)]), []);
+      same('alerts: anything already sent is skipped', alertKeys([alertSpot('a', 4, 4)], { 'surf|a|2026-11-13|morning': 't' }), ['surf|a|2026-11-13|evening']);
+      same('alerts: best first, then closest', alertKeys([alertSpot('far', 4, 1, 200), alertSpot('near', 4, 1, 30), alertSpot('top', 5, 1, 300)]).map((key) => key.split('|')[1]), ['top', 'near', 'far']);
+      same('alerts: a spot with no Day 3 is skipped', alertKeys([{ id: 'short', days: [] }]), []);
+      same('alerts: a missing rating does not alert', alertKeys([alertSpot('a', null, null)]), []);
+
+      const surfEmail = buildSurfEmail(findSurfAlerts([alertSpot('Jupiter', 4, 5, 94), alertSpot('Cocoa', 4, 1, 180)], settings, {}), settings);
+      check('alerts: the subject names the spot and day', surfEmail.subject === 'Surf alert: Jupiter and 1 more on Friday', surfEmail.subject);
+      same('alerts: one spot gets a simple subject', buildSurfEmail(findSurfAlerts([alertSpot('Jupiter', 4, 1)], settings, {}), settings).subject, 'Surf alert: Jupiter on Friday');
+      check('alerts: the email gives the date', surfEmail.text.includes('Friday, Nov 13'), surfEmail.text);
+      check('alerts: the email gives window, rating, size and drive', surfEmail.text.includes('Jupiter, evening') && surfEmail.text.includes('Rated 5 (Great), 4.1 ft at 8.5 s') && surfEmail.text.includes('About 1 hr 35 min from Doral'), surfEmail.text);
+      check('alerts: the email links to the spot', surfEmail.text.includes(`${settings.siteUrl}#Jupiter`), surfEmail.text);
+      check('alerts: html is escaped', buildSurfEmail(findSurfAlerts([{ ...alertSpot('<b>', 4, 1), name: '<b>' }], settings, {}), settings).html.includes('&#60;b&#62;'));
+
+      same('alerts: a new storm alerts', findTropicalAlerts([storm], {}).map((alert) => alert.key), ['tropical|s']);
+      same('alerts: a storm already sent does not repeat', findTropicalAlerts([storm], { 'tropical|s': 't' }), []);
+      const stormEmail = buildTropicalEmail(findTropicalAlerts([storm, disturbance], {}), settings);
+      same('alerts: the heads-up names the systems', stormEmail.subject, 'Tropical heads-up: Hurricane Gert, Disturbance in the Caribbean Sea');
+      check('alerts: the heads-up gives position and chance', stormEmail.text.includes('near 17.1N, 58.4W') && stormEmail.text.includes('60% chance'), stormEmail.text);
+
+      const alertNow = new Date('2026-11-20T10:00:00Z');
+      same('alerts: marks what was sent', markSent({}, [{ key: 'k' }], alertNow), { k: '2026-11-20T10:00:00.000Z' });
+      same('alerts: keeps recent records', Object.keys(pruneSent({ recent: '2026-11-10T00:00:00Z' }, alertNow)), ['recent']);
+      same('alerts: drops old records', Object.keys(pruneSent({ old: '2026-09-01T00:00:00Z' }, alertNow)), []);
 
       // --- Spots ---
       check('spots: every spot has a drive time from each starting point', spots.every((spot) => Object.keys(settings.homes).every((home) => Number.isFinite(spot.driveMinutes[home]))));

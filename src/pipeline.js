@@ -6,13 +6,14 @@
 //   final     what gets rated: blended, with wave height adjusted by the nearest buoy
 //   slots     one per time of day: final values, wind, score, rating, spread and confidence
 //   score     the whole day, weighted by the profile; rating is the rounded version
-//   flags     empty until Phase 3 adds the tropical flag
+//   flags     notes for that day, like a tropical system that could send swell
 
 import { blendReadings, blendValues } from './blend.js';
 import { confidenceLabel } from './confidence.js';
 import { computeBias, correctionFactor, distanceKm, distanceStrength } from './correction.js';
 import { scoreConditions, scoreDay, toRating } from './rating.js';
 import { fetchBuoyData } from './sources/ndbc.js';
+import { fetchTropicalData, flagsForDay } from './sources/nhc.js';
 import { fetchMarine, fetchOpenMeteo } from './sources/open-meteo.js';
 
 const average = (values) => {
@@ -81,7 +82,7 @@ function scaled(values, factor) {
   };
 }
 
-function buildDay(data, date, dayIndex, settings, profile, nowKey, buoy) {
+function buildDay(data, date, dayIndex, settings, profile, nowKey, buoy, tropical) {
   const raw = Object.fromEntries(Object.keys(data.models).map((modelId) => [modelId, {}]));
   const blended = {};
   const final = {};
@@ -129,7 +130,7 @@ function buildDay(data, date, dayIndex, settings, profile, nowKey, buoy) {
     score,
     rating: toRating(score),
     confidence: confidenceLabel({ dayIndex, spreadFt }, settings.confidence),
-    flags: [],
+    flags: flagsForDay(tropical, dayIndex, settings.tropical),
   };
 }
 
@@ -167,7 +168,7 @@ function buoyForSpot(spot, status, settings) {
   return { ...status, distanceKm: km, strength: distanceStrength(km, settings.buoyCorrection) };
 }
 
-export function buildSpotForecast(spot, data, settings, nowKey, buoyStatus = null) {
+export function buildSpotForecast(spot, data, settings, nowKey, buoyStatus = null, tropical = []) {
   const profile = settings.profiles[settings.activeProfile];
   const dates = [...new Set(data.times.map(dateOf))];
   const buoy = buoyForSpot(spot, buoyStatus, settings);
@@ -176,7 +177,9 @@ export function buildSpotForecast(spot, data, settings, nowKey, buoyStatus = nul
     buoy,
     nowFactor: factorAt(buoy, 0, settings),
     now: buildNow(data, nowKey, buoy, settings),
-    days: dates.map((date, dayIndex) => buildDay(data, date, dayIndex, settings, profile, nowKey, buoy)),
+    days: dates.map((date, dayIndex) =>
+      buildDay(data, date, dayIndex, settings, profile, nowKey, buoy, tropical),
+    ),
   };
 }
 
@@ -216,12 +219,13 @@ async function loadBuoyStatuses(buoys, settings, now) {
 
 export async function loadForecast(spots, buoys, settings) {
   const now = new Date();
-  const [data, statuses] = await Promise.all([
+  const [data, statuses, tropical] = await Promise.all([
     fetchOpenMeteo(spots, settings),
     loadBuoyStatuses(buoys, settings, now),
+    fetchTropicalData(settings.tropical, now),
   ]);
   const nowKey = localHourKey(now, settings.timezone);
   return spots.map((spot, index) =>
-    buildSpotForecast(spot, data[index], settings, nowKey, statuses[spot.buoyId] ?? null),
+    buildSpotForecast(spot, data[index], settings, nowKey, statuses[spot.buoyId] ?? null, tropical),
   );
 }

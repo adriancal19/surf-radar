@@ -94,6 +94,30 @@ main,
   cursor: pointer;
 }
 
+/* Tropical flag. The text says what it is, so color is never the only signal. */
+
+.tropical-banner {
+  margin-bottom: 14px;
+  padding: 10px 12px;
+  border: 1px solid #e0b252;
+  border-radius: 12px;
+  background: #fdf4dc;
+  color: #4d3a0a;
+  font-size: 0.85rem;
+}
+
+.tropical-banner a {
+  color: inherit;
+}
+
+.day-flag {
+  display: block;
+  margin-top: 2px;
+  color: #7a5a0c;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
 /* Controls */
 
 .controls {

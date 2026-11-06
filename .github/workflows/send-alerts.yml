@@ -1,0 +1,69 @@
+name: Send surf alerts
+
+# Runs once a day, early in the morning. 10:00 UTC is 5 am in winter and 6 am in summer.
+# GitHub can start scheduled jobs late, sometimes by an hour or so.
+# The record of what's been sent lives on its own branch, so code history stays clean.
+
+on:
+  schedule:
+    - cron: '0 10 * * *'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: What to do
+        type: choice
+        default: dry-run
+        options:
+          - dry-run
+          - test-email
+          - send
+
+permissions:
+  contents: write
+
+jobs:
+  alerts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Get the record of what has been sent
+        run: |
+          mkdir -p alert-state
+          if git fetch -q origin alert-state; then
+            git show FETCH_HEAD:sent.json > alert-state/sent.json
+          else
+            echo '{}' > alert-state/sent.json
+          fi
+          cp alert-state/sent.json alert-state/before.json
+
+      - name: Check the forecast and send alerts
+        env:
+          MODE: ${{ inputs.mode || 'send' }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          ALERT_FROM: ${{ secrets.ALERT_FROM }}
+          ALERT_TO: ${{ secrets.ALERT_TO }}
+        run: node scripts/send-alerts.js alert-state/sent.json
+
+      # Runs even if something failed, so an email that did go out is never sent again.
+      - name: Save the record
+        if: always()
+        working-directory: alert-state
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if cmp -s sent.json before.json; then
+            echo 'Nothing new to record.'
+            exit 0
+          fi
+          rm before.json
+          git init -q -b alert-state
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add sent.json
+          git commit -q -m 'Update sent alerts'
+          git push -q -f "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" alert-state

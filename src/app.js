@@ -143,6 +143,18 @@ const timeRow = () =>
     TIMES.map(({ id, label }) => chip(label, `data-time="${id}"`)).join(''),
   );
 
+// Every spot gets the same tropical flags, so any spot can supply the list.
+function tropicalBanner() {
+  const texts = [...new Set(forecast[0].days.flatMap((day) => day.flags.map((flag) => flag.text)))];
+  if (!texts.length) return '';
+  return `
+    <p class="tropical-banner" role="status">
+      <strong>${texts.map(escapeHtml).join('<br />')}</strong><br />
+      Waves may build before the models show it. The Bahamas often block swell south of Jupiter.
+      <a href="https://www.nhc.noaa.gov/">National Hurricane Center</a>
+    </p>`;
+}
+
 function renderControls() {
   const ranges = RANGES.map(({ days, label }) => chip(label, `data-range="${days}"`)).join('');
   const sorts = Object.entries(SORTS)
@@ -154,6 +166,7 @@ function renderControls() {
   ].join('');
 
   return `
+    ${tropicalBanner()}
     <div class="controls">
       ${timeRow()}
       ${controlRow('Look ahead', ranges)}
@@ -326,6 +339,7 @@ function renderDay(day) {
               <span>${slot.confidence}${timeNote}</span>
               <span class="row-value">${formatPeriod(slot.final.swellPeriodS)} · ${formatWind(slot.wind)}</span>
             </span>
+            ${day.flags.map((flag) => `<span class="day-flag">${escapeHtml(flag.text)}</span>`).join('')}
           </span>
         </summary>
         <div class="day-more">
@@ -341,6 +355,7 @@ function renderSpot(spot) {
     <a class="back" href="#">← All spots</a>
     <h1 class="spot-title">${escapeHtml(spot.name)}</h1>
     <p class="spot-summary"><span id="spot-best">${bestDayText(spot)}</span><br />${driveText(spot)}</p>
+    ${tropicalBanner()}
     ${renderNow(spot)}
     ${renderBuoy(spot)}
     <section>

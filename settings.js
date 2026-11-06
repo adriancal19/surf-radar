@@ -15,6 +15,27 @@ export const settings = {
     { id: 'ecmwf_wam025', label: 'ECMWF' },
   ],
 
+  siteUrl: 'https://adriancal19.github.io/surf-radar/',
+
+  // Email alerts. Morning and evening are listed separately, so an evening-only day still counts.
+  alerts: {
+    daysAhead: 3,
+    minRating: 4,
+    windows: ['morning', 'evening'],
+  },
+
+  // Tropical flags. See src/sources/nhc.js.
+  tropical: {
+    dataUrl: 'https://raw.githubusercontent.com/adriancal19/surf-radar/buoy-data/tropical.json',
+    // An older file is ignored rather than showing a storm that may be gone.
+    maxAgeHours: 24,
+    // A disturbance counts once its 7-day chance of forming reaches this percent.
+    minOutlookChance: 40,
+    // Which forecast days get flagged, from today (0) through Day 7.
+    stormDays: [0, 5],
+    outlookDays: [3, 7],
+  },
+
   // The live buoy correction. See src/correction.js.
   buoyCorrection: {
     dataUrl: 'https://raw.githubusercontent.com/adriancal19/surf-radar/buoy-data/buoys.json',
