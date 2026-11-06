@@ -1,0 +1,15 @@
+{
+  "name": "Surf Radar",
+  "short_name": "Surf Radar",
+  "description": "When to go surfing on Florida's east coast, from Cocoa Beach to South Beach.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f8f2e7",
+  "theme_color": "#f6c9a0",
+  "icons": [
+    { "src": "assets/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "assets/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "assets/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
