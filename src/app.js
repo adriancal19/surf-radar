@@ -3,12 +3,16 @@
 
 import { settings } from '../settings.js';
 import { spots } from '../spots.js';
+import { LOW } from './confidence.js';
 import {
   applyView,
   bestDay,
+  bestDayInRange,
   driveMinutes,
   DRIVE_LIMITS,
   formatDrive,
+  formatDriveShort,
+  RANGES,
   restoreView,
   SORTS,
 } from './filters.js';
@@ -35,11 +39,10 @@ function readSavedView() {
 }
 
 function saveView() {
-  const { sort, worthSurfingOnly, maxDriveMinutes } = view;
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ sort, worthSurfingOnly, maxDriveMinutes }));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(view));
   } catch {
-    // Private browsing can block storage. The filters still work, they just won't be remembered.
+    // Private browsing can block storage. The controls still work, they just won't be remembered.
   }
 }
 
@@ -83,11 +86,22 @@ function windowHours({ startHour, endHour }) {
   return `${hour(startHour)}–${hour(endHour)}`;
 }
 
+const trendNote = (day) => (day.confidence === LOW ? ' (trend)' : '');
+
+// Reads as a phrase: "Good on Tue", "Fair today", "Skip it all 5 days".
+function ratingPhrase(day, rangeDays) {
+  if (!day) return ratingLabel(null);
+  const label = ratingLabel(day.rating);
+  if (day.rating === 1 && rangeDays > 1) return `${label} all ${rangeDays} days`;
+  if (day.dayIndex === 0) return `${label} today`;
+  return `${label} on ${dayName(day)}${trendNote(day)}`;
+}
+
 function bestDayText(spot) {
   const best = bestDay(spot.days);
   if (!best) return '';
-  if (best.rating === 1) return 'No day above 1';
-  return `Best: ${dayName(best)}, rated ${best.rating}`;
+  if (best.rating === 1) return 'No day above 1 this week';
+  return `Best day: ${dayName(best)}, rated ${best.rating}${trendNote(best)}`;
 }
 
 function driveText(spot) {
@@ -95,63 +109,66 @@ function driveText(spot) {
   return drive ? `${drive[0].toUpperCase()}${drive.slice(1)} from ${escapeHtml(home.label)}` : '';
 }
 
+function chip(label, attributes) {
+  return `<button type="button" class="chip" ${attributes}>${label}</button>`;
+}
+
+function controlRow(label, chips) {
+  return `
+    <div class="control-row" role="group" aria-label="${label}">
+      <span class="control-label">${label}</span>
+      <div class="chips">${chips}</div>
+    </div>`;
+}
+
 function renderControls() {
-  const dayButtons = forecast[0].days
-    .map(
-      (day) =>
-        `<button type="button" class="day-button" data-day="${day.dayIndex}">${dayName(day)}</button>`,
-    )
+  const ranges = RANGES.map(({ days, label }) => chip(label, `data-range="${days}"`)).join('');
+  const sorts = Object.entries(SORTS)
+    .map(([value, label]) => chip(label, `data-sort="${value}"`))
     .join('');
-  const sortOptions = Object.entries(SORTS)
-    .map(
-      ([value, label]) =>
-        `<option value="${value}"${value === view.sort ? ' selected' : ''}>${label}</option>`,
-    )
-    .join('');
-  const driveOptions = DRIVE_LIMITS.map(
-    ({ minutes, label }) =>
-      `<option value="${minutes ?? ''}"${minutes === view.maxDriveMinutes ? ' selected' : ''}>${label}</option>`,
-  ).join('');
+  const filters = [
+    chip(`Rated ${profile.worthSurfingRating}+`, 'data-worth="true"'),
+    ...DRIVE_LIMITS.map(({ minutes, label }) => chip(label, `data-drive="${minutes}"`)),
+  ].join('');
 
   return `
     <div class="controls">
-      <div class="day-buttons" role="group" aria-label="Forecast day">${dayButtons}</div>
-      <div class="control-row">
-        <label>Sort
-          <select id="sort">${sortOptions}</select>
-        </label>
-        <label>Drive from ${escapeHtml(home.label)}
-          <select id="max-drive">${driveOptions}</select>
-        </label>
-      </div>
-      <label class="checkbox">
-        <input type="checkbox" id="worth-surfing"${view.worthSurfingOnly ? ' checked' : ''} />
-        Only spots rated ${profile.worthSurfingRating} or higher
-      </label>
+      ${controlRow('Look ahead', ranges)}
+      ${controlRow('Sort', sorts)}
+      ${controlRow('Only show', filters)}
     </div>
     <p class="intro" id="list-summary" aria-live="polite"></p>
     <div id="spot-results"></div>`;
 }
 
 function renderSpotRow(spot) {
-  const day = spot.days[view.dayIndex];
-  const morning = day.final.morning;
+  const day = bestDayInRange(spot, view.rangeDays);
+  const morning = day?.final.morning;
+  const drive = formatDriveShort(driveMinutes(spot, profile.home));
   return `
     <li>
       <a class="spot-row" href="#${escapeHtml(spot.id)}">
-        ${ratingBadge(day.rating)}
-        <span class="spot-name">
-          <strong>${escapeHtml(spot.name)}</strong>
-          <small>${ratingLabel(day.rating)} · ${bestDayText(spot)}</small>
-          <small>${driveText(spot)}</small>
-        </span>
-        <span class="spot-numbers">
-          <strong>${formatFt(morning.waveHeightFt)}</strong>
-          <small>${formatPeriod(morning.swellPeriodS)}</small>
-          <small>${formatWind(day.wind.morning)}</small>
+        ${ratingBadge(day?.rating ?? null)}
+        <span class="row-text">
+          <span class="row-line">
+            <strong>${escapeHtml(spot.name)}</strong>
+            <strong class="row-value">${formatFt(morning?.waveHeightFt)}</strong>
+          </span>
+          <span class="row-line row-detail">
+            <span>${ratingPhrase(day, view.rangeDays)}${drive ? ` · ${drive} drive` : ''}</span>
+            <span class="row-value">${formatPeriod(morning?.swellPeriodS)}</span>
+          </span>
         </span>
       </a>
     </li>`;
+}
+
+function isSelected(button) {
+  const { range, sort, worth, drive } = button.dataset;
+  if (range) return Number(range) === view.rangeDays;
+  if (sort) return sort === view.sort;
+  if (worth) return view.worthSurfingOnly;
+  return Number(drive) === view.maxDriveMinutes;
 }
 
 function updateList() {
@@ -160,22 +177,19 @@ function updateList() {
     worthSurfingRating: profile.worthSurfingRating,
   });
 
-  const selectedDay = forecast[0].days[view.dayIndex];
-  document.querySelectorAll('.day-button').forEach((button) => {
-    button.setAttribute('aria-pressed', String(Number(button.dataset.day) === view.dayIndex));
+  document.querySelectorAll('.chip').forEach((button) => {
+    button.setAttribute('aria-pressed', String(isSelected(button)));
   });
 
-  const dayText =
-    view.dayIndex === 0
-      ? "Today's ratings"
-      : `Ratings for ${formatDate(selectedDay.date, { weekday: 'long', month: 'short', day: 'numeric' })}`;
-  const countText = visible.length === forecast.length ? '' : ` Showing ${visible.length} of ${forecast.length} spots.`;
+  const rangeText = view.rangeDays === 1 ? "Today's rating" : `Best day in the next ${view.rangeDays} days`;
+  const hours = windowHours(profile.windows.morning);
+  const countText = visible.length === forecast.length ? '' : ` ${visible.length} of ${forecast.length} spots.`;
   document.querySelector('#list-summary').textContent =
-    `${dayText}, with ${windowHours(profile.windows.morning)} morning conditions.${countText}`;
+    `${rangeText}, with ${hours} wave height and period.${countText}`;
 
   document.querySelector('#spot-results').innerHTML = visible.length
     ? `<ul class="spot-list">${visible.map(renderSpotRow).join('')}</ul>`
-    : '<p class="message">No spots match these filters.</p>';
+    : '<p class="message">No spots match. Try looking further ahead or removing a filter.</p>';
 }
 
 function renderList() {
@@ -188,7 +202,7 @@ function renderNow(spot) {
   if (!spot.now) return '';
   return `
     <section class="now">
-      <h2>Forecast for right now</h2>
+      <h2>Right now</h2>
       <dl>
         <div><dt>Waves</dt><dd>${formatFt(spot.now.waveHeightFt)}</dd></div>
         <div><dt>Swell period</dt><dd>${formatPeriod(spot.now.swellPeriodS)}</dd></div>
@@ -200,23 +214,25 @@ function renderNow(spot) {
 function renderDay(day) {
   const { morning, midday } = day.final;
   return `
-    <li class="day">
-      ${ratingBadge(day.rating)}
-      <div class="day-main">
-        <div class="day-heading">
-          <strong>${dayName(day)}</strong>
-          <span>${formatDate(day.date, { month: 'short', day: 'numeric' })}</span>
-          <span class="confidence">${day.confidence}</span>
-        </div>
-        <div class="day-values">
-          <strong>${formatFt(morning.waveHeightFt)}</strong>
-          <span>${formatPeriod(morning.swellPeriodS)}</span>
-          <span>${formatWind(day.wind.morning)}</span>
-        </div>
-        <div class="day-midday">
+    <li>
+      <details class="day">
+        <summary>
+          ${ratingBadge(day.rating)}
+          <span class="row-text">
+            <span class="row-line">
+              <strong>${dayName(day)}, ${formatDate(day.date, { month: 'short', day: 'numeric' })}</strong>
+              <strong class="row-value">${formatFt(morning.waveHeightFt)}</strong>
+            </span>
+            <span class="row-line row-detail">
+              <span>${day.confidence}</span>
+              <span class="row-value">${formatPeriod(morning.swellPeriodS)} · ${formatWind(day.wind.morning)}</span>
+            </span>
+          </span>
+        </summary>
+        <p class="day-midday">
           Midday: ${formatFt(midday.waveHeightFt)} · ${formatPeriod(midday.swellPeriodS)} · ${formatWind(day.wind.midday)}
-        </div>
-      </div>
+        </p>
+      </details>
     </li>`;
 }
 
@@ -224,11 +240,11 @@ function renderSpot(spot) {
   main.innerHTML = `
     <a class="back" href="#">← All spots</a>
     <h1 class="spot-title">${escapeHtml(spot.name)}</h1>
-    <p class="spot-summary">${driveText(spot)}<br />${bestDayText(spot)}</p>
+    <p class="spot-summary">${bestDayText(spot)}<br />${driveText(spot)}</p>
     ${renderNow(spot)}
     <section>
-      <h2>Today and the next 7 days</h2>
-      <p class="intro">Main numbers are ${escapeHtml(windowHours(profile.windows.morning))} morning conditions. Wind is shown for info and doesn't affect the rating.</p>
+      <h2>Day by day</h2>
+      <p class="intro">Numbers are for ${escapeHtml(windowHours(profile.windows.morning))}. Tap a day for midday. Wind doesn't affect the rating.</p>
       <ol class="day-list">${spot.days.map(renderDay).join('')}</ol>
     </section>`;
   document.title = `${spot.name} – Surf Radar`;
@@ -245,18 +261,13 @@ function render() {
 
 // The controls get redrawn with the list view, so listen on the container that stays put.
 main.addEventListener('click', (event) => {
-  const button = event.target.closest('.day-button');
+  const button = event.target.closest('.chip');
   if (!button) return;
-  view.dayIndex = Number(button.dataset.day);
-  updateList();
-});
-
-main.addEventListener('change', (event) => {
-  if (event.target.id === 'sort') view.sort = event.target.value;
-  else if (event.target.id === 'max-drive') {
-    view.maxDriveMinutes = event.target.value === '' ? null : Number(event.target.value);
-  } else if (event.target.id === 'worth-surfing') view.worthSurfingOnly = event.target.checked;
-  else return;
+  const { range, sort, worth, drive } = button.dataset;
+  if (range) view.rangeDays = Number(range);
+  else if (sort) view.sort = sort;
+  else if (worth) view.worthSurfingOnly = !view.worthSurfingOnly;
+  else view.maxDriveMinutes = Number(drive) === view.maxDriveMinutes ? null : Number(drive);
   saveView();
   updateList();
 });

@@ -20,7 +20,7 @@
       import { blendValues, blendReadings } from '../src/blend.js';
       import { confidenceLabel, HIGH, MEDIUM, LOW } from '../src/confidence.js';
       import { averageDirection, buildSpotForecast, localHourKey } from '../src/pipeline.js';
-      import { applyView, bestDay, DEFAULT_VIEW, formatDrive, restoreView } from '../src/filters.js';
+      import { applyView, bestDay, bestDayInRange, DEFAULT_VIEW, formatDrive, formatDriveShort, restoreView } from '../src/filters.js';
       import { interpolate, scoreConditions, scoreDay, toRating } from '../src/rating.js';
       import { parseMarineLocation, parseWindLocation } from '../src/sources/open-meteo.js';
 
@@ -154,9 +154,12 @@
       same('filters: north to south keeps the original order', order({}), ['far-4', 'far-5', 'mid-3', 'near-4', 'near-5', 'near-1']);
       same('filters: best to worst puts the closest first within each rating', order({ sort: 'best' }), ['near-5', 'far-5', 'near-4', 'far-4', 'mid-3', 'near-1']);
       same('filters: closest to farthest ignores rating', order({ sort: 'closest' }), ['near-5', 'near-1', 'near-4', 'mid-3', 'far-5', 'far-4']);
-      same('filters: best to worst follows the selected day', order({ sort: 'best', dayIndex: 1 }), ['mid-3', 'near-1', 'near-4', 'far-5', 'near-5', 'far-4']);
+      same('filters: best first uses the best day in the range', order({ sort: 'best', rangeDays: 2 }), ['near-5', 'mid-3', 'far-5', 'near-1', 'near-4', 'far-4']);
       same('filters: worth surfing keeps 3 and up', order({ worthSurfingOnly: true }), ['far-4', 'far-5', 'mid-3', 'near-4', 'near-5']);
-      same('filters: worth surfing follows the selected day', order({ worthSurfingOnly: true, dayIndex: 1 }), ['mid-3', 'near-4', 'near-1']);
+      same('filters: worth surfing counts any day in the range', order({ worthSurfingOnly: true, rangeDays: 2 }), ['far-4', 'far-5', 'mid-3', 'near-4', 'near-5', 'near-1']);
+      same('filters: a range of 1 only looks at today', bestDayInRange(fakeForecast[2], 1).dayIndex, 0);
+      same('filters: a longer range finds the later best day', bestDayInRange(fakeForecast[2], 2).dayIndex, 1);
+      same('filters: a range longer than the forecast still works', bestDayInRange(fakeForecast[2], 7).dayIndex, 1);
       same('filters: max drive keeps exactly the limit', order({ maxDriveMinutes: 90 }), ['mid-3', 'near-4', 'near-5', 'near-1']);
       same('filters: filters combine with sorting', order({ sort: 'best', worthSurfingOnly: true, maxDriveMinutes: 60 }), ['near-5', 'near-4']);
       same('filters: sorting does not reorder the forecast itself', (order({ sort: 'closest' }), fakeForecast[0].id), 'far-4');
@@ -166,6 +169,10 @@
       same('filters: drive times round to 5 minutes', formatDrive(102), 'about 1 hr 40 min');
       same('filters: whole hours drop the minutes', formatDrive(239), 'about 4 hr');
       same('filters: unknown drive time gives nothing', formatDrive(null), null);
+      same('filters: short drive under an hour', formatDriveShort(29), '30m');
+      same('filters: short drive with hours and minutes', formatDriveShort(102), '1h 40m');
+      same('filters: short drive on the hour', formatDriveShort(180), '3h');
+      same('filters: unknown short drive gives nothing', formatDriveShort(null), null);
 
       same('filters: best day is the highest rating', bestDay(fakeForecast[2].days).dayIndex, 1);
       same('filters: a tied best day goes to the soonest', bestDay([{ dayIndex: 0, rating: 2 }, { dayIndex: 1, rating: 4 }, { dayIndex: 2, rating: 4 }]).dayIndex, 1);
@@ -173,9 +180,9 @@
       same('filters: no ratings gives no best day', bestDay([{ dayIndex: 0, rating: null }]), null);
 
       same('filters: nothing saved gives the defaults', restoreView(null), DEFAULT_VIEW);
-      same('filters: restores saved choices', restoreView({ sort: 'best', worthSurfingOnly: true, maxDriveMinutes: 120 }), { dayIndex: 0, sort: 'best', worthSurfingOnly: true, maxDriveMinutes: 120 });
-      same('filters: ignores unrecognized saved choices', restoreView({ sort: 'toString', worthSurfingOnly: 'yes', maxDriveMinutes: 45 }), DEFAULT_VIEW);
-      same('filters: the day always starts on today', restoreView({ dayIndex: 3 }).dayIndex, 0);
+      same('filters: restores saved choices', restoreView({ rangeDays: 5, sort: 'best', worthSurfingOnly: true, maxDriveMinutes: 120 }), { rangeDays: 5, sort: 'best', worthSurfingOnly: true, maxDriveMinutes: 120 });
+      same('filters: ignores unrecognized saved choices', restoreView({ rangeDays: 4, sort: 'toString', worthSurfingOnly: 'yes', maxDriveMinutes: 45 }), DEFAULT_VIEW);
+      same('filters: choices saved by the older version are ignored safely', restoreView({ sort: 'best', dayIndex: 3 }), { ...DEFAULT_VIEW, sort: 'best' });
 
       // --- Spots ---
       check('spots: every spot has a drive time from each starting point', spots.every((spot) => Object.keys(settings.homes).every((home) => Number.isFinite(spot.driveMinutes[home]))));
