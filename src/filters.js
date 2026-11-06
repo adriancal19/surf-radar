@@ -1,6 +1,8 @@
 // Sorting and filtering for the spot list, plus the drive time and best-time helpers.
 // No page drawing here, so it's easy to test.
 
+import { LOW } from './confidence.js';
+
 // How far ahead to look, counting today. "3 days" is today, tomorrow and the day after.
 export const RANGES = [
   { days: 1, label: 'Today' },
@@ -29,10 +31,11 @@ export const DRIVE_LIMITS = [
   { minutes: 120, label: 'Within 2 hr' },
 ];
 
+// The default answers "when should I go?": any time, over the days with useful confidence.
 export const DEFAULT_VIEW = {
-  rangeDays: 1,
-  time: 'morning',
-  sort: 'north-south',
+  rangeDays: 5,
+  time: ALL_DAY,
+  sort: 'best',
   worthSurfingOnly: false,
   maxDriveMinutes: null,
 };
@@ -60,12 +63,15 @@ export function formatDriveShort(minutes) {
   return remainder === 0 ? `${hours}h` : `${hours}h ${remainder}m`;
 }
 
+// A time you can no longer make: it's over, or the drive would use up too much of it.
+export const isOutOfReach = (slot) => Boolean(slot?.past || slot?.tooLate);
+
 // One day's conditions for the chosen time. For all day, that's its highest-scoring window
-// that hasn't passed yet. If windows tie, the earliest wins.
+// you can still reach. If windows tie, the earliest wins.
 export function slotForTime(day, time) {
   if (time !== ALL_DAY) return day.slots[time];
   const slots = Object.values(day.slots);
-  const upcoming = slots.filter((slot) => !slot.past);
+  const upcoming = slots.filter((slot) => !isOutOfReach(slot));
   const choices = upcoming.length ? upcoming : slots;
   return choices.reduce(
     (best, slot) => ((slot.score ?? -Infinity) > (best.score ?? -Infinity) ? slot : best),
@@ -85,14 +91,42 @@ function highestRated(days, time) {
 }
 
 // The highest-rated day for the chosen time, as { day, slot }. If several days tie, the
-// soonest wins, since it's the most reliable. Times that have passed only count if nothing
+// soonest wins, since it's the most reliable. Times out of reach only count if nothing
 // else is left.
 export function bestDay(days, time) {
-  const upcoming = days.filter((day) => !slotForTime(day, time)?.past);
+  const upcoming = days.filter((day) => !isOutOfReach(slotForTime(day, time)));
   return highestRated(upcoming, time) ?? highestRated(days, time);
 }
 
 export const bestDayInRange = (spot, rangeDays, time) => bestDay(spot.days.slice(0, rangeDays), time);
+
+// The single best outing within the chosen time, range and drive, as { spot, day, slot }.
+// Times out of reach and low-confidence days don't count, and neither does anything
+// rated below "worth surfing", so this can honestly answer that nothing is worth it.
+// Highest rating wins. Among equals: no wind warning, then the shorter drive, then the sooner day.
+export function bestTimeToGo(forecast, view, { homeId, worthSurfingRating }) {
+  const driveOf = (spot) => driveMinutes(spot, homeId) ?? Infinity;
+  const options = [];
+  for (const spot of forecast) {
+    if (view.maxDriveMinutes !== null && driveOf(spot) > view.maxDriveMinutes) continue;
+    for (const day of spot.days.slice(0, view.rangeDays)) {
+      const slots = view.time === ALL_DAY ? Object.values(day.slots) : [day.slots[view.time]];
+      for (const slot of slots) {
+        if (slot && !isOutOfReach(slot) && slot.confidence !== LOW && slot.rating >= worthSurfingRating) {
+          options.push({ spot, day, slot });
+        }
+      }
+    }
+  }
+  options.sort(
+    (a, b) =>
+      b.slot.rating - a.slot.rating ||
+      Number(Boolean(a.slot.windWarning)) - Number(Boolean(b.slot.windWarning)) ||
+      (driveOf(a.spot) === driveOf(b.spot) ? 0 : driveOf(a.spot) - driveOf(b.spot)) ||
+      a.day.dayIndex - b.day.dayIndex,
+  );
+  return options[0] ?? null;
+}
 
 // Returns the spots to show, in order. Each spot counts as its best day in the range.
 // `best` groups spots by rating, closest first within each rating.

@@ -10,6 +10,7 @@ import {
   applyView,
   bestDay,
   bestDayInRange,
+  bestTimeToGo,
   driveMinutes,
   DRIVE_LIMITS,
   formatDrive,
@@ -105,6 +106,7 @@ function ratingPhrase(best, rangeDays, time) {
   const { day, slot } = best;
   const label = ratingLabel(slot.rating);
   if (slot.past) return `Earlier today: ${label}`;
+  if (slot.tooLate) return `Too late to drive today: ${label}`;
   if (slot.rating === 1) return rangeDays > 1 ? `${label} all ${rangeDays} days` : `${label} today`;
   if (time === ALL_DAY) return `${label} ${whenWithTime(day, slot)}${unsureNote(slot)}`;
   const when = day.dayIndex === 0 ? 'today' : `on ${dayName(day)}`;
@@ -143,6 +145,55 @@ const timeRow = () =>
     TIMES.map(({ id, label }) => chip(label, `data-time="${id}"`)).join(''),
   );
 
+function renderTopPick() {
+  const pick = bestTimeToGo(forecast, view, {
+    homeId: profile.home,
+    worthSurfingRating: profile.worthSurfingRating,
+  });
+  if (!pick) {
+    const days = view.rangeDays === 1 ? 'today' : `in the next ${view.rangeDays} days`;
+    return `
+      <div class="top-pick top-pick-none">
+        <span class="top-pick-label">Best time to go</span>
+        <strong>Nothing rated ${profile.worthSurfingRating}+ ${days}</strong>
+        <span>Try looking further ahead or allowing a longer drive.</span>
+      </div>`;
+  }
+  const { spot, day, slot } = pick;
+  const drive = formatDriveShort(driveMinutes(spot, profile.home));
+  const details = [
+    `${ratingLabel(slot.rating)}, ${formatFt(slot.final.waveHeightFt)} at ${formatPeriod(slot.final.swellPeriodS)}`,
+    drive && `${drive} drive`,
+  ].filter(Boolean);
+  return `
+    <a class="top-pick" href="#${escapeHtml(spot.id)}">
+      ${ratingBadge(slot.rating)}
+      <span class="row-text">
+        <span class="top-pick-label">Best time to go</span>
+        <strong>${escapeHtml(spot.name)}, ${whenWithTime(day, slot)}</strong>
+        <span class="row-detail">${details.join(' · ')}</span>
+        ${slot.windWarning ? `<span class="wind-warning">${slot.windWarning}</span>` : ''}
+      </span>
+    </a>`;
+}
+
+function renderCams(spot) {
+  const search = encodeURIComponent(`${spot.name} Florida live beach cam`);
+  const links = [
+    ...(spot.cams ?? []),
+    // sp= limits the results to streams that are live right now.
+    { label: 'Search live cams on YouTube', url: `https://www.youtube.com/results?search_query=${search}&sp=EgJAAQ%253D%253D` },
+  ];
+  return `
+    <section>
+      <h2>Live cams</h2>
+      <ul class="cam-list">
+        ${links.map(({ label, url }) => `<li><a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(label)}</a></li>`).join('')}
+      </ul>
+      <p class="intro">Free public cams on other sites. Some have ads or go offline.</p>
+    </section>`;
+}
+
 // Every spot gets the same tropical flags, so any spot can supply the list.
 function tropicalBanner() {
   const texts = [...new Set(forecast[0].days.flatMap((day) => day.flags.map((flag) => flag.text)))];
@@ -167,6 +218,7 @@ function renderControls() {
 
   return `
     ${tropicalBanner()}
+    <div id="top-pick"></div>
     <div class="controls">
       ${timeRow()}
       ${controlRow('Look ahead', ranges)}
@@ -199,6 +251,7 @@ function renderSpotRow(spot) {
             <span>${ratingPhrase(best, view.rangeDays, view.time)}${drive ? ` · ${drive} drive` : ''}</span>
             <span class="row-value">${formatPeriod(final?.swellPeriodS)}</span>
           </span>
+          ${best?.slot.windWarning ? `<span class="wind-warning">${best.slot.windWarning}</span>` : ''}
         </span>
       </a>
     </li>`;
@@ -245,6 +298,7 @@ function updateList() {
   });
 
   updateChips();
+  document.querySelector('#top-pick').innerHTML = renderTopPick();
   document.querySelector('#filter-summary').textContent = filterSummaryText();
 
   const countText = visible.length === forecast.length ? '' : ` ${visible.length} of ${forecast.length} spots.`;
@@ -314,14 +368,20 @@ function renderWindowLine(slot) {
   const label = profile.windows[slot.name].label;
   return `
     <li>
-      <strong>${label}:</strong> rated ${slot.rating ?? MISSING} · ${formatFt(slot.final.waveHeightFt)} · ${formatPeriod(slot.final.swellPeriodS)} · ${formatWind(slot.wind)}
+      <strong>${label}:</strong> rated ${slot.rating ?? MISSING} · ${formatFt(slot.final.waveHeightFt)} · ${formatPeriod(slot.final.swellPeriodS)} · ${formatWind(slot.wind)}${slot.windWarning ? ` · <span class="wind-warning-inline">${slot.windWarning}</span>` : ''}
     </li>`;
 }
 
 function renderDay(day) {
   const slot = slotForTime(day, view.time);
   const date = `${dayName(day)}, ${formatDate(day.date, { month: 'short', day: 'numeric' })}`;
-  const timeNote = slot.past ? ' · passed' : view.time === ALL_DAY ? ` · ${windowName(slot)}` : '';
+  const timeNote = slot.past
+    ? ' · passed'
+    : slot.tooLate
+      ? ' · too late today'
+      : view.time === ALL_DAY
+        ? ` · ${windowName(slot)}`
+        : '';
   const spreadNote = Number.isFinite(slot.spreadFt)
     ? `<p>Models differ by ${slot.spreadFt.toFixed(1)} ft for the ${windowName(slot)}.</p>`
     : '';
@@ -339,6 +399,7 @@ function renderDay(day) {
               <span>${slot.confidence}${timeNote}</span>
               <span class="row-value">${formatPeriod(slot.final.swellPeriodS)} · ${formatWind(slot.wind)}</span>
             </span>
+            ${slot.windWarning ? `<span class="wind-warning">${slot.windWarning}</span>` : ''}
             ${day.flags.map((flag) => `<span class="day-flag">${escapeHtml(flag.text)}</span>`).join('')}
           </span>
         </summary>
@@ -356,6 +417,7 @@ function renderSpot(spot) {
     <h1 class="spot-title">${escapeHtml(spot.name)}</h1>
     <p class="spot-summary"><span id="spot-best">${bestDayText(spot)}</span><br />${driveText(spot)}</p>
     ${tropicalBanner()}
+    ${renderCams(spot)}
     ${renderNow(spot)}
     ${renderBuoy(spot)}
     <section>

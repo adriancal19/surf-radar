@@ -118,6 +118,76 @@ main,
   font-weight: 600;
 }
 
+/* The main answer */
+
+.top-pick {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+  padding: 12px;
+  border: 2px solid var(--accent);
+  border-radius: 12px;
+  background: var(--surface);
+  color: inherit;
+  text-decoration: none;
+}
+
+.top-pick-none {
+  display: block;
+  border-color: var(--line);
+}
+
+.top-pick-none > * {
+  display: block;
+}
+
+.top-pick .row-text > * {
+  display: block;
+}
+
+.top-pick-label {
+  color: var(--accent);
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+/* Wind warning. Same reasoning: the words carry the meaning. */
+
+.wind-warning {
+  display: block;
+  margin-top: 2px;
+  color: #7a5a0c;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.wind-warning-inline {
+  color: #7a5a0c;
+  font-weight: 600;
+}
+
+/* Cam links */
+
+.cam-list {
+  margin: 0 0 6px;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  list-style: none;
+}
+
+.cam-list li + li {
+  border-top: 1px solid var(--line);
+}
+
+.cam-list a {
+  display: block;
+  padding: 10px 12px;
+}
+
 /* Controls */
 
 .controls {

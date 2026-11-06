@@ -22,6 +22,18 @@ export const settings = {
     daysAhead: 3,
     minRating: 4,
     windows: ['morning', 'evening'],
+    // The email lists this many spots, then says how many more are on the site.
+    maxSpots: 5,
+  },
+
+  // Starting guesses for when to warn about wind. It doesn't change the rating.
+  windWarning: {
+    // Wind from this range of compass directions blows onshore.
+    onshoreFromDeg: 30,
+    onshoreToDeg: 150,
+    onshoreMph: 12,
+    // Windy enough to mention from any direction.
+    strongMph: 20,
   },
 
   // Tropical flags. See src/sources/nhc.js.
@@ -57,6 +69,9 @@ export const settings = {
   homes: {
     doral: { label: 'Doral', lat: 25.82, lon: -80.35 },
   },
+
+  // Today's times aren't suggested unless you could drive there and still get this long in the water.
+  minSurfMinutes: 90,
 
   activeProfile: 'adrian',
 

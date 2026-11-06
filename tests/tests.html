@@ -16,6 +16,7 @@
 
     <script type="module">
       import { buoys } from '../buoys.js';
+      import { windWarning } from '../src/wind.js';
       import { settings } from '../settings.js';
       import { spots } from '../spots.js';
       import { computeBias, correctionFactor, distanceKm, distanceStrength } from '../src/correction.js';
@@ -25,7 +26,7 @@
       import { blendValues, blendReadings } from '../src/blend.js';
       import { confidenceLabel, HIGH, MEDIUM, LOW } from '../src/confidence.js';
       import { averageDirection, buildBuoyStatus, buildSpotForecast, localHourKey } from '../src/pipeline.js';
-      import { ALL_DAY, applyView, bestDay, bestDayInRange, DEFAULT_VIEW, formatDrive, formatDriveShort, restoreView, slotForTime } from '../src/filters.js';
+      import { ALL_DAY, applyView, bestDay, bestDayInRange, bestTimeToGo, DEFAULT_VIEW, formatDrive, formatDriveShort, restoreView, slotForTime } from '../src/filters.js';
       import { interpolate, scoreConditions, scoreDay, toRating } from '../src/rating.js';
       import { parseMarineLocation, parseWindLocation } from '../src/sources/open-meteo.js';
 
@@ -187,8 +188,9 @@
         fakeSpot('near-5', [5, 1], 30),
         fakeSpot('near-1', [1, 4], 40),
       ];
+      const BASE_VIEW = { rangeDays: 1, time: 'morning', sort: 'north-south', worthSurfingOnly: false, maxDriveMinutes: null };
       const options = { homeId: 'doral', worthSurfingRating: 3 };
-      const order = (changes) => applyView(fakeForecast, { ...DEFAULT_VIEW, ...changes }, options).map((spot) => spot.id);
+      const order = (changes) => applyView(fakeForecast, { ...BASE_VIEW, ...changes }, options).map((spot) => spot.id);
 
       same('filters: north to south keeps the original order', order({}), ['far-4', 'far-5', 'mid-3', 'near-4', 'near-5', 'near-1']);
       same('filters: best to worst puts the closest first within each rating', order({ sort: 'best' }), ['near-5', 'far-5', 'near-4', 'far-4', 'mid-3', 'near-1']);
@@ -217,14 +219,14 @@
       same('time: all day still answers once every window has passed', slotForTime(allPastDay, ALL_DAY).name, 'morning');
       same('time: look-ahead skips a morning that has passed', bestDay([pastDay, fakeDay(1, 3)], 'morning').day.dayIndex, 1);
       same('time: a passed morning still shows when it is all that is left', bestDay([pastDay], 'morning').slot.past, true);
-      same('time: morning availability hides an evening-only spot', applyView([eveningSpot], { ...DEFAULT_VIEW, worthSurfingOnly: true }, options).length, 0);
-      same('time: evening availability keeps it', applyView([eveningSpot], { ...DEFAULT_VIEW, worthSurfingOnly: true, time: 'evening' }, options).length, 1);
-      same('time: all day keeps it', applyView([eveningSpot], { ...DEFAULT_VIEW, worthSurfingOnly: true, time: ALL_DAY }, options).length, 1);
-      same('time: best first follows the chosen time', applyView([fakeSpot('morning-4', [4], 50), eveningSpot], { ...DEFAULT_VIEW, sort: 'best', time: 'evening' }, options)[0].id, 'evening-spot');
+      same('time: morning availability hides an evening-only spot', applyView([eveningSpot], { ...BASE_VIEW, worthSurfingOnly: true }, options).length, 0);
+      same('time: evening availability keeps it', applyView([eveningSpot], { ...BASE_VIEW, worthSurfingOnly: true, time: 'evening' }, options).length, 1);
+      same('time: all day keeps it', applyView([eveningSpot], { ...BASE_VIEW, worthSurfingOnly: true, time: ALL_DAY }, options).length, 1);
+      same('time: best first follows the chosen time', applyView([fakeSpot('morning-4', [4], 50), eveningSpot], { ...BASE_VIEW, sort: 'best', time: 'evening' }, options)[0].id, 'evening-spot');
       same('filters: max drive keeps exactly the limit', order({ maxDriveMinutes: 90 }), ['mid-3', 'near-4', 'near-5', 'near-1']);
       same('filters: filters combine with sorting', order({ sort: 'best', worthSurfingOnly: true, maxDriveMinutes: 60 }), ['near-5', 'near-4']);
       same('filters: sorting does not reorder the forecast itself', (order({ sort: 'closest' }), fakeForecast[0].id), 'far-4');
-      same('filters: a spot with no drive time sorts last', applyView([fakeSpot('none', [5], null), fakeSpot('some', [5], 100)], { ...DEFAULT_VIEW, sort: 'closest' }, options).map((spot) => spot.id), ['some', 'none']);
+      same('filters: a spot with no drive time sorts last', applyView([fakeSpot('none', [5], null), fakeSpot('some', [5], 100)], { ...BASE_VIEW, sort: 'closest' }, options).map((spot) => spot.id), ['some', 'none']);
 
       same('filters: under an hour shows minutes', formatDrive(31), 'about 30 min');
       same('filters: drive times round to 5 minutes', formatDrive(102), 'about 1 hr 40 min');
@@ -384,7 +386,18 @@
       check('alerts: the subject names the spot and day', surfEmail.subject === 'Surf alert: Jupiter and 1 more on Friday', surfEmail.subject);
       same('alerts: one spot gets a simple subject', buildSurfEmail(findSurfAlerts([alertSpot('Jupiter', 4, 1)], settings, {}), settings).subject, 'Surf alert: Jupiter on Friday');
       check('alerts: the email gives the date', surfEmail.text.includes('Friday, Nov 13'), surfEmail.text);
-      check('alerts: the email gives window, rating, size and drive', surfEmail.text.includes('Jupiter, evening') && surfEmail.text.includes('Rated 5 (Great), 4.1 ft at 8.5 s') && surfEmail.text.includes('About 1 hr 35 min from Doral'), surfEmail.text);
+      check('alerts: one line per spot, listing both windows', surfEmail.text.includes('Morning rated 4, Evening rated 5 (Great). 4.1 ft at 8.5 s') && surfEmail.text.includes('About 1 hr 35 min from Doral'), surfEmail.text);
+      same('alerts: a spot only appears once', surfEmail.text.split('\n').filter((line) => line === 'Jupiter').length, 1);
+      const manySpots = ['a', 'b', 'c', 'd', 'e', 'f', 'g'].map((id, index) => alertSpot(id, 4, 1, 30 + index));
+      const cappedEmail = buildSurfEmail(findSurfAlerts(manySpots, settings, {}), settings);
+      same('alerts: the subject counts every spot', cappedEmail.subject, 'Surf alert: a and 6 more on Friday');
+      check('alerts: the email lists the closest few spots', cappedEmail.text.includes('\ne\n') && !cappedEmail.text.includes('\nf\n'), cappedEmail.text);
+      check('alerts: the email says how many more', cappedEmail.text.includes('Plus 2 more spots on the site.'), cappedEmail.text);
+      check('alerts: no extra line when all spots fit', !surfEmail.text.includes('Plus '), surfEmail.text);
+      const windyDays = alertDays(4, 1); windyDays[3].slots.morning.windWarning = 'Onshore wind, may be choppy';
+      const windySpot = { id: 'windy', name: 'windy', driveMinutes: { doral: 10 }, days: windyDays };
+      same('alerts: a calm spot beats an equal windy one', findSurfAlerts([windySpot, alertSpot('calm', 4, 1, 200)], settings, {})[0].spot.id, 'calm');
+      check('alerts: the email mentions the wind', buildSurfEmail(findSurfAlerts([windySpot], settings, {}), settings).text.includes('Onshore wind, may be choppy'));
       check('alerts: the email links to the spot', surfEmail.text.includes(`${settings.siteUrl}#Jupiter`), surfEmail.text);
       check('alerts: html is escaped', buildSurfEmail(findSurfAlerts([{ ...alertSpot('<b>', 4, 1), name: '<b>' }], settings, {}), settings).html.includes('&#60;b&#62;'));
 
@@ -399,6 +412,62 @@
       same('alerts: keeps recent records', Object.keys(pruneSent({ recent: '2026-11-10T00:00:00Z' }, alertNow)), ['recent']);
       same('alerts: drops old records', Object.keys(pruneSent({ old: '2026-09-01T00:00:00Z' }, alertNow)), []);
 
+      // --- Wind warning ---
+      const windRules = settings.windWarning;
+      same('wind: light onshore wind is fine', windWarning({ speedMph: 8, directionDeg: 90 }, windRules), null);
+      same('wind: onshore at the limit warns', windWarning({ speedMph: 12, directionDeg: 90 }, windRules), 'Onshore wind, may be choppy');
+      same('wind: the edge of onshore counts', windWarning({ speedMph: 15, directionDeg: 30 }, windRules), 'Onshore wind, may be choppy');
+      same('wind: moderate offshore wind is fine', windWarning({ speedMph: 15, directionDeg: 270 }, windRules), null);
+      same('wind: strong wind warns from any direction', windWarning({ speedMph: 22, directionDeg: 270 }, windRules), 'Strong wind, may be rough');
+      same('wind: missing speed gives no warning', windWarning({ speedMph: null, directionDeg: 90 }, windRules), null);
+      same('wind: missing direction only warns if strong', windWarning({ speedMph: 15, directionDeg: null }, windRules), null);
+      const windyData = { ...data, wind: { speedMph: times.map(() => 15), directionDeg: times.map(() => 90) } };
+      const windyForecast = buildSpotForecast({ id: 'test' }, windyData, settings, '2026-11-06T07:00');
+      same('wind: warnings reach each slot', windyForecast.days[0].slots.morning.windWarning, 'Onshore wind, may be choppy');
+      same('wind: the warning does not change the rating', windyForecast.days[0].slots.morning.score, firstDay.slots.morning.score);
+
+      // --- Best time to go ---
+      const pickDay = (dayIndex, morning, evening, extra = {}) => {
+        const day = fakeDay(dayIndex, morning, 1, evening);
+        Object.assign(day.slots.morning, extra);
+        Object.assign(day.slots.evening, extra);
+        return day;
+      };
+      const pickSpot = (id, minutes, days) => ({ id, driveMinutes: { doral: minutes }, days });
+      const pick = (forecast, changes = {}) => {
+        const result = bestTimeToGo(forecast, { ...BASE_VIEW, time: ALL_DAY, rangeDays: 5, ...changes }, options);
+        return result && `${result.spot.id}|${result.day.dayIndex}|${result.slot.name}`;
+      };
+      same('pick: the highest rating wins', pick([pickSpot('near', 10, [pickDay(1, 3, 3)]), pickSpot('far', 200, [pickDay(1, 5, 1)])]), 'far|1|morning');
+      same('pick: a better evening wins on all day', pick([pickSpot('a', 10, [pickDay(1, 3, 5)])]), 'a|1|evening');
+      same('pick: morning availability ignores the evening', pick([pickSpot('a', 10, [pickDay(1, 3, 5)])], { time: 'morning' }), 'a|1|morning');
+      same('pick: the closer spot wins a tie', pick([pickSpot('far', 200, [pickDay(1, 4, 1)]), pickSpot('near', 10, [pickDay(1, 4, 1)])]), 'near|1|morning');
+      same('pick: the sooner day wins at the same spot', pick([pickSpot('a', 10, [pickDay(2, 4, 1), pickDay(1, 4, 1)])]), 'a|1|morning');
+      same('pick: calm beats windy at the same rating, even if farther', pick([pickSpot('windy', 10, [pickDay(1, 4, 1, { windWarning: 'Onshore' })]), pickSpot('calm', 200, [pickDay(1, 4, 1)])]), 'calm|1|morning');
+      same('pick: a higher rating still beats calm', pick([pickSpot('windy', 10, [pickDay(1, 5, 1, { windWarning: 'Onshore' })]), pickSpot('calm', 200, [pickDay(1, 4, 1)])]), 'windy|1|morning');
+      same('pick: a passed time does not count', pick([pickSpot('a', 10, [pickDay(0, 5, 1, { past: true }), pickDay(1, 3, 1)])]), 'a|1|morning');
+      same('pick: low confidence does not count', pick([pickSpot('a', 10, [pickDay(1, 5, 1, { confidence: LOW }), pickDay(2, 3, 1)])]), 'a|2|morning');
+      same('pick: outside the range does not count', pick([pickSpot('a', 10, [pickDay(0, 3, 1), pickDay(1, 5, 1)])], { rangeDays: 1 }), 'a|0|morning');
+      same('pick: too long a drive does not count', pick([pickSpot('far', 200, [pickDay(1, 5, 1)]), pickSpot('near', 10, [pickDay(1, 3, 1)])], { maxDriveMinutes: 60 }), 'near|1|morning');
+      same('pick: nothing worth it gives no answer', pick([pickSpot('a', 10, [pickDay(1, 2, 2)])]), null);
+
+      const lateFrom = (minutes, nowKey) => buildSpotForecast({ id: 'test', driveMinutes: { doral: minutes } }, data, settings, nowKey).days;
+      same('reach: a long drive makes this evening too late', lateFrom(115, '2026-11-06T15:00')[0].slots.evening.tooLate, true);
+      same('reach: a short drive still makes it', lateFrom(30, '2026-11-06T15:00')[0].slots.evening.tooLate, false);
+      same('reach: the same drive makes it earlier in the day', lateFrom(115, '2026-11-06T11:00')[0].slots.evening.tooLate, false);
+      same('reach: tomorrow is never too late', lateFrom(115, '2026-11-06T15:00')[1].slots.evening.tooLate, false);
+      same('reach: a window that is over counts as passed instead', lateFrom(115, '2026-11-06T15:00')[0].slots.morning.tooLate, false);
+      same('pick: too late to drive does not count', pick([pickSpot('a', 10, [pickDay(0, 5, 1, { tooLate: true }), pickDay(1, 3, 1)])]), 'a|1|morning');
+      const lateDay = fakeDay(0, 1, 1, 5); lateDay.slots.evening.tooLate = true;
+      same('time: all day skips a window too late to reach', slotForTime(lateDay, ALL_DAY).name, 'morning');
+      same('time: look-ahead skips a window too late to reach', bestDay([lateDay, fakeDay(1, 1, 1, 3)], 'evening').day.dayIndex, 1);
+      // --- Default view ---
+      same('view: the default answers when to go', [DEFAULT_VIEW.time, DEFAULT_VIEW.rangeDays, DEFAULT_VIEW.sort], [ALL_DAY, 5, 'best']);
+
+      // --- Cams ---
+      check('cams: every spot has at least one link', spots.every((spot) => spot.cams?.length > 0));
+      check('cams: every link is secure and labeled', spots.every((spot) => spot.cams.every((cam) => cam.label && cam.url.startsWith('https://'))));
+      check('cams: no paid surf cam sites', spots.every((spot) => spot.cams.every((cam) => !cam.url.includes('surfline.com'))));
       // --- Spots ---
       check('spots: every spot has a drive time from each starting point', spots.every((spot) => Object.keys(settings.homes).every((home) => Number.isFinite(spot.driveMinutes[home]))));
       same('spots: there are 17', spots.length, 17);

@@ -28,7 +28,20 @@ export function findSurfAlerts(forecast, settings, sent) {
     }
   }
   const drive = (alert) => driveMinutes(alert.spot, homeId) ?? Infinity;
-  return alerts.sort((a, b) => b.slot.rating - a.slot.rating || drive(a) - drive(b));
+  const windy = (alert) => Number(Boolean(alert.slot.windWarning));
+  return alerts.sort(
+    (a, b) => b.slot.rating - a.slot.rating || windy(a) - windy(b) || drive(a) - drive(b),
+  );
+}
+
+// One entry per spot, best spot first. Each spot's first alert is its best window.
+function groupBySpot(alerts) {
+  const groups = new Map();
+  for (const alert of alerts) {
+    if (!groups.has(alert.spot.id)) groups.set(alert.spot.id, []);
+    groups.get(alert.spot.id).push(alert);
+  }
+  return [...groups.values()];
 }
 
 export function buildSurfEmail(alerts, settings) {
@@ -37,31 +50,54 @@ export function buildSurfEmail(alerts, settings) {
   const date = alerts[0].day.date;
   const dayLong = dayText(date, { weekday: 'long', month: 'short', day: 'numeric' });
 
-  const names = [...new Set(alerts.map((alert) => alert.spot.name))];
-  const place = names.length === 1 ? names[0] : `${names[0]} and ${names.length - 1} more`;
+  const groups = groupBySpot(alerts);
+  const place = groups.length === 1 ? groups[0][0].spot.name : `${groups[0][0].spot.name} and ${groups.length - 1} more`;
   const subject = `Surf alert: ${place} on ${dayText(date, { weekday: 'long' })}`;
 
-  const lines = alerts.map(({ spot, slot }) => {
-    const window = profile.windows[slot.name].label.toLowerCase();
-    const size = `${slot.final.waveHeightFt.toFixed(1)} ft at ${slot.final.swellPeriodS?.toFixed(1) ?? '?'} s`;
+  const shown = groups.slice(0, settings.alerts.maxSpots);
+  const hiddenCount = groups.length - shown.length;
+
+  const lines = shown.map((group) => {
+    const { spot, slot: best } = group[0];
+    const windows = settings.alerts.windows
+      .map((name) => group.find((alert) => alert.slot.name === name))
+      .filter(Boolean)
+      .map((alert) => `${profile.windows[alert.slot.name].label} rated ${alert.slot.rating}`)
+      .join(', ');
+    const size = `${best.final.waveHeightFt.toFixed(1)} ft at ${best.final.swellPeriodS?.toFixed(1) ?? '?'} s`;
     const drive = formatDrive(driveMinutes(spot, profile.home));
+    const parts = [
+      `${windows} (${ratingLabel(best.rating)})`,
+      size,
+      best.confidence,
+      drive && `${drive[0].toUpperCase()}${drive.slice(1)} from ${home.label}`,
+      best.windWarning,
+    ];
     return {
       url: `${settings.siteUrl}#${spot.id}`,
-      title: `${spot.name}, ${window}`,
-      detail: `Rated ${slot.rating} (${ratingLabel(slot.rating)}), ${size}. ${slot.confidence}.${drive ? ` ${drive[0].toUpperCase()}${drive.slice(1)} from ${home.label}.` : ''}`,
+      title: spot.name,
+      detail: `${parts.filter(Boolean).join('. ')}.`,
     };
   });
 
   const intro = `Forecast for ${dayLong}, 3 days out:`;
+  const more = hiddenCount > 0 ? `Plus ${hiddenCount} more ${hiddenCount === 1 ? 'spot' : 'spots'} on the site.` : '';
   const closing = 'This is a forecast, not a guarantee. Check again closer to the day.';
   return {
     subject,
-    text: [intro, '', ...lines.flatMap((line) => [line.title, line.detail, line.url, '']), closing].join('\n'),
+    text: [
+      intro,
+      '',
+      ...lines.flatMap((line) => [line.title, line.detail, line.url, '']),
+      ...(more ? [`${more} ${settings.siteUrl}`, ''] : []),
+      closing,
+    ].join('\n'),
     html: [
       `<p>${escapeHtml(intro)}</p>`,
       ...lines.map(
         (line) => `<p><a href="${escapeHtml(line.url)}"><strong>${escapeHtml(line.title)}</strong></a><br>${escapeHtml(line.detail)}</p>`,
       ),
+      ...(more ? [`<p><a href="${escapeHtml(settings.siteUrl)}">${escapeHtml(more)}</a></p>`] : []),
       `<p>${escapeHtml(closing)}</p>`,
     ].join('\n'),
   };

@@ -10,11 +10,13 @@
 
 import { blendReadings, blendValues } from './blend.js';
 import { confidenceLabel } from './confidence.js';
+import { driveMinutes } from './filters.js';
 import { computeBias, correctionFactor, distanceKm, distanceStrength } from './correction.js';
 import { scoreConditions, scoreDay, toRating } from './rating.js';
 import { fetchBuoyData } from './sources/ndbc.js';
 import { fetchTropicalData, flagsForDay } from './sources/nhc.js';
 import { fetchMarine, fetchOpenMeteo } from './sources/open-meteo.js';
+import { windWarning } from './wind.js';
 
 const average = (values) => {
   const present = values.filter((value) => Number.isFinite(value));
@@ -82,12 +84,13 @@ function scaled(values, factor) {
   };
 }
 
-function buildDay(data, date, dayIndex, settings, profile, nowKey, buoy, tropical) {
+function buildDay(data, date, dayIndex, settings, profile, nowKey, buoy, tropical, drive) {
   const raw = Object.fromEntries(Object.keys(data.models).map((modelId) => [modelId, {}]));
   const blended = {};
   const final = {};
   const wind = {};
   const slots = {};
+  const isToday = dateOf(nowKey) === date;
   let spreadFt = null;
 
   for (const [name, window] of Object.entries(profile.windows)) {
@@ -107,9 +110,15 @@ function buildDay(data, date, dayIndex, settings, profile, nowKey, buoy, tropica
     slots[name] = {
       name,
       // Already over, so it shouldn't be suggested as a time to go.
-      past: dateOf(nowKey) === date && hourOf(nowKey) >= window.endHour,
+      past: isToday && hourOf(nowKey) >= window.endHour,
+      // Still going, but you couldn't get there in time for a real session.
+      tooLate:
+        isToday &&
+        hourOf(nowKey) < window.endHour &&
+        (window.endHour - hourOf(nowKey)) * 60 < drive + settings.minSurfMinutes,
       final: final[name],
       wind: wind[name],
+      windWarning: windWarning(wind[name], settings.windWarning),
       score: slotScore,
       rating: toRating(slotScore),
       spreadFt: heightSpreadFt,
@@ -172,13 +181,14 @@ export function buildSpotForecast(spot, data, settings, nowKey, buoyStatus = nul
   const profile = settings.profiles[settings.activeProfile];
   const dates = [...new Set(data.times.map(dateOf))];
   const buoy = buoyForSpot(spot, buoyStatus, settings);
+  const drive = driveMinutes(spot, profile.home) ?? 0;
   return {
     ...spot,
     buoy,
     nowFactor: factorAt(buoy, 0, settings),
     now: buildNow(data, nowKey, buoy, settings),
     days: dates.map((date, dayIndex) =>
-      buildDay(data, date, dayIndex, settings, profile, nowKey, buoy, tropical),
+      buildDay(data, date, dayIndex, settings, profile, nowKey, buoy, tropical, drive),
     ),
   };
 }
