@@ -14,12 +14,15 @@
 // times ran long (4 hr to Cocoa Beach, against about 3 hr in practice), so these use:
 // 15 minutes + road miles × 0.817, which gives 3 hr for Cocoa's 202 miles.
 //
+// beach is the shore itself, used to draw the map.
+//
 // cams are links to free public pages, never embedded or re-hosted. Streams move and go
 // offline, so the page also adds a live YouTube search for every spot. Hand-picked 2026-11-06.
 
 export const spots = [
   {
     id: 'cocoa-beach',
+    beach: { lat: 28.32, lon: -80.607 },
     name: 'Cocoa Beach',
     lat: 28.32,
     lon: -80.59,
@@ -32,6 +35,7 @@ export const spots = [
   },
   {
     id: 'melbourne-beach',
+    beach: { lat: 28.07, lon: -80.56 },
     name: 'Melbourne Beach',
     lat: 28.042,
     lon: -80.458,
@@ -41,6 +45,7 @@ export const spots = [
   },
   {
     id: 'sebastian-inlet',
+    beach: { lat: 27.86, lon: -80.445 },
     name: 'Sebastian Inlet',
     lat: 27.86,
     lon: -80.43,
@@ -53,6 +58,7 @@ export const spots = [
   },
   {
     id: 'vero-beach',
+    beach: { lat: 27.65, lon: -80.355 },
     name: 'Vero Beach',
     lat: 27.65,
     lon: -80.34,
@@ -62,6 +68,7 @@ export const spots = [
   },
   {
     id: 'fort-pierce-inlet',
+    beach: { lat: 27.47, lon: -80.29 },
     name: 'Fort Pierce Inlet',
     lat: 27.458,
     lon: -80.208,
@@ -71,6 +78,7 @@ export const spots = [
   },
   {
     id: 'stuart-jensen-beach',
+    beach: { lat: 27.2, lon: -80.16 },
     name: 'Stuart / Jensen Beach',
     lat: 27.208,
     lon: -80.125,
@@ -80,6 +88,7 @@ export const spots = [
   },
   {
     id: 'jupiter-juno',
+    beach: { lat: 26.94, lon: -80.07 },
     name: 'Jupiter Inlet / Juno',
     lat: 26.958,
     lon: -79.958,
@@ -92,6 +101,7 @@ export const spots = [
   },
   {
     id: 'palm-beach',
+    beach: { lat: 26.7, lon: -80.035 },
     name: 'Palm Beach',
     lat: 26.708,
     lon: -79.958,
@@ -101,6 +111,7 @@ export const spots = [
   },
   {
     id: 'lake-worth-pier',
+    beach: { lat: 26.612, lon: -80.034 },
     name: 'Lake Worth Pier',
     lat: 26.61,
     lon: -80.02,
@@ -110,6 +121,7 @@ export const spots = [
   },
   {
     id: 'delray-beach',
+    beach: { lat: 26.46, lon: -80.06 },
     name: 'Delray Beach',
     lat: 26.46,
     lon: -80.05,
@@ -119,6 +131,7 @@ export const spots = [
   },
   {
     id: 'boca-inlet',
+    beach: { lat: 26.335, lon: -80.07 },
     name: 'Boca Inlet',
     lat: 26.375,
     lon: -79.958,
@@ -128,6 +141,7 @@ export const spots = [
   },
   {
     id: 'deerfield-beach',
+    beach: { lat: 26.318, lon: -80.075 },
     name: 'Deerfield Beach',
     lat: 26.292,
     lon: -79.958,
@@ -137,6 +151,7 @@ export const spots = [
   },
   {
     id: 'pompano-beach',
+    beach: { lat: 26.235, lon: -80.085 },
     name: 'Pompano Beach',
     lat: 26.208,
     lon: -79.958,
@@ -146,6 +161,7 @@ export const spots = [
   },
   {
     id: 'fort-lauderdale',
+    beach: { lat: 26.12, lon: -80.1 },
     name: 'Fort Lauderdale',
     lat: 26.125,
     lon: -79.958,
@@ -155,6 +171,7 @@ export const spots = [
   },
   {
     id: 'hollywood',
+    beach: { lat: 26.01, lon: -80.115 },
     name: 'Hollywood',
     lat: 26.01,
     lon: -80.1,
@@ -164,6 +181,7 @@ export const spots = [
   },
   {
     id: 'haulover',
+    beach: { lat: 25.9, lon: -80.12 },
     name: 'Haulover',
     lat: 25.9,
     lon: -80.11,
@@ -173,6 +191,7 @@ export const spots = [
   },
   {
     id: 'south-beach',
+    beach: { lat: 25.78, lon: -80.128 },
     name: 'South Beach',
     lat: 25.78,
     lon: -80.115,

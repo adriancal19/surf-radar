@@ -38,6 +38,7 @@ export const DEFAULT_VIEW = {
   sort: 'best',
   worthSurfingOnly: false,
   maxDriveMinutes: null,
+  display: 'list',
 };
 
 export const driveMinutes = (spot, homeId) => spot.driveMinutes?.[homeId] ?? null;
@@ -154,6 +155,7 @@ export function restoreView(saved) {
   if (TIMES.some((time) => time.id === saved.time)) view.time = saved.time;
   if (Object.hasOwn(SORTS, saved.sort)) view.sort = saved.sort;
   if (saved.worthSurfingOnly === true) view.worthSurfingOnly = true;
+  if (saved.display === 'map') view.display = 'map';
   if (DRIVE_LIMITS.some((limit) => limit.minutes === saved.maxDriveMinutes)) {
     view.maxDriveMinutes = saved.maxDriveMinutes;
   }

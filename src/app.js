@@ -21,6 +21,8 @@ import {
   SORTS,
   TIMES,
 } from './filters.js';
+import { icon } from './icons.js';
+import { landPath, layoutPins, MAP_HEIGHT, MAP_WIDTH, toX, toY } from './map.js';
 import { loadForecast } from './pipeline.js';
 import { ratingLabel } from './rating.js';
 
@@ -31,6 +33,7 @@ const profile = settings.profiles[settings.activeProfile];
 const home = settings.homes[profile.home];
 const MISSING = '–';
 const STORAGE_KEY = 'surf-radar-view';
+const TIME_ICONS = { morning: 'sunrise', midday: 'sun', evening: 'sunset', [ALL_DAY]: 'allDay' };
 
 let forecast = null;
 let view = restoreView(readSavedView());
@@ -94,6 +97,9 @@ function windowHours({ startHour, endHour }) {
 const windowName = (slot) => profile.windows[slot.name].label.toLowerCase();
 const unsureNote = (slot) => (slot.confidence === LOW ? ' (unsure)' : '');
 
+const windNote = (slot) =>
+  slot.windWarning ? `<span class="wind-warning">${icon('wind', 14)} ${slot.windWarning}</span>` : '';
+
 // "this morning", "midday today" or "Sat evening".
 function whenWithTime(day, slot) {
   if (day.dayIndex > 0) return `${dayName(day)} ${windowName(slot)}`;
@@ -127,52 +133,43 @@ function driveText(spot) {
   return drive ? `${drive[0].toUpperCase()}${drive.slice(1)} from ${escapeHtml(home.label)}` : '';
 }
 
-function chip(label, attributes) {
-  return `<button type="button" class="chip" ${attributes}>${label}</button>`;
-}
-
-function controlRow(label, chips) {
-  return `
-    <div class="control-row" role="group" aria-label="${label}">
-      <span class="control-label">${label}</span>
-      <div class="chips">${chips}</div>
-    </div>`;
-}
-
-const timeRow = () =>
-  controlRow(
-    'When can you go?',
-    TIMES.map(({ id, label }) => chip(label, `data-time="${id}"`)).join(''),
-  );
+const pickOptions = () => ({
+  homeId: profile.home,
+  worthSurfingRating: profile.worthSurfingRating,
+});
 
 function renderTopPick() {
-  const pick = bestTimeToGo(forecast, view, {
-    homeId: profile.home,
-    worthSurfingRating: profile.worthSurfingRating,
-  });
+  const pick = bestTimeToGo(forecast, view, pickOptions());
   if (!pick) {
     const days = view.rangeDays === 1 ? 'today' : `in the next ${view.rangeDays} days`;
     return `
       <div class="top-pick top-pick-none">
         <span class="top-pick-label">Best time to go</span>
-        <strong>Nothing rated ${profile.worthSurfingRating}+ ${days}</strong>
+        <strong class="top-pick-title">Nothing rated ${profile.worthSurfingRating}+ ${days}</strong>
         <span>Try looking further ahead or allowing a longer drive.</span>
       </div>`;
   }
   const { spot, day, slot } = pick;
   const drive = formatDriveShort(driveMinutes(spot, profile.home));
-  const details = [
-    `${ratingLabel(slot.rating)}, ${formatFt(slot.final.waveHeightFt)} at ${formatPeriod(slot.final.swellPeriodS)}`,
-    drive && `${drive} drive`,
-  ].filter(Boolean);
   return `
     <a class="top-pick" href="#${escapeHtml(spot.id)}">
-      ${ratingBadge(slot.rating)}
-      <span class="row-text">
+      <svg class="top-pick-waves" viewBox="0 0 400 60" preserveAspectRatio="none" aria-hidden="true">
+        <path d="M0 30c40-22 70-22 110 0s70 22 110 0 70-22 110 0 50 16 70 8v22H0Z" fill="#fff" opacity=".07"/>
+        <path d="M0 44c50-16 80-16 125 0s75 16 125 0 85-16 150 0v16H0Z" fill="#fff" opacity=".09"/>
+      </svg>
+      <span class="top-pick-text">
         <span class="top-pick-label">Best time to go</span>
-        <strong>${escapeHtml(spot.name)}, ${whenWithTime(day, slot)}</strong>
-        <span class="row-detail">${details.join(' · ')}</span>
-        ${slot.windWarning ? `<span class="wind-warning">${slot.windWarning}</span>` : ''}
+        <strong class="top-pick-title">${escapeHtml(spot.name)}</strong>
+        <span class="top-pick-when">${whenWithTime(day, slot)}${unsureNote(slot)}</span>
+        <span class="top-pick-stats">
+          <span>${icon('wave')} ${formatFt(slot.final.waveHeightFt)} at ${formatPeriod(slot.final.swellPeriodS)}</span>
+          ${drive ? `<span>${icon('car')} ${drive}</span>` : ''}
+        </span>
+        ${windNote(slot)}
+      </span>
+      <span class="top-pick-rating">
+        ${ratingBadge(slot.rating)}
+        <span>${ratingLabel(slot.rating)}</span>
       </span>
     </a>`;
 }
@@ -186,9 +183,14 @@ function renderCams(spot) {
   ];
   return `
     <section>
-      <h2>Live cams</h2>
+      <h2>${icon('camera', 18)} See it live</h2>
       <ul class="cam-list">
-        ${links.map(({ label, url }) => `<li><a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(label)}</a></li>`).join('')}
+        ${links
+          .map(
+            ({ label, url }) =>
+              `<li><a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer"><span>${escapeHtml(label)}</span>${icon('external', 15)}</a></li>`,
+          )
+          .join('')}
       </ul>
       <p class="intro">Free public cams on other sites. Some have ads or go offline.</p>
     </section>`;
@@ -199,12 +201,34 @@ function tropicalBanner() {
   const texts = [...new Set(forecast[0].days.flatMap((day) => day.flags.map((flag) => flag.text)))];
   if (!texts.length) return '';
   return `
-    <p class="tropical-banner" role="status">
-      <strong>${texts.map(escapeHtml).join('<br />')}</strong><br />
-      Waves may build before the models show it. The Bahamas often block swell south of Jupiter.
-      <a href="https://www.nhc.noaa.gov/">National Hurricane Center</a>
-    </p>`;
+    <div class="tropical-banner" role="status">
+      ${icon('storm', 22)}
+      <p>
+        <strong>${texts.map(escapeHtml).join('<br />')}</strong><br />
+        Waves may build before the models show it. The Bahamas often block swell south of Jupiter.
+        <a href="https://www.nhc.noaa.gov/">National Hurricane Center</a>
+      </p>
+    </div>`;
 }
+
+function chip(label, attributes, iconName) {
+  return `<button type="button" class="chip" ${attributes}>${iconName ? icon(iconName, 15) : ''}<span>${label}</span></button>`;
+}
+
+function controlRow(label, chips, segmented = false) {
+  return `
+    <div class="control-row" role="group" aria-label="${label}">
+      <span class="control-label">${label}</span>
+      <div class="${segmented ? 'segments' : 'chips'}">${chips}</div>
+    </div>`;
+}
+
+const timeRow = () =>
+  controlRow(
+    'When can you go?',
+    TIMES.map(({ id, label }) => chip(label, `data-time="${id}"`, TIME_ICONS[id])).join(''),
+    true,
+  );
 
 function renderControls() {
   const ranges = RANGES.map(({ days, label }) => chip(label, `data-range="${days}"`)).join('');
@@ -221,14 +245,20 @@ function renderControls() {
     <div id="top-pick"></div>
     <div class="controls">
       ${timeRow()}
-      ${controlRow('Look ahead', ranges)}
+      ${controlRow('Look ahead', ranges, true)}
+    </div>
+    <div class="list-head">
       <details class="more-controls">
-        <summary>Sort and filter: <span id="filter-summary"></span></summary>
+        <summary>${icon('sliders', 15)}<span id="filter-summary"></span></summary>
         <div class="controls">
           ${controlRow('Sort', sorts)}
           ${controlRow('Only show', filters)}
         </div>
       </details>
+      <div class="segments display-toggle" role="group" aria-label="Show as">
+        ${chip('List', 'data-display="list"', 'list')}
+        ${chip('Map', 'data-display="map"', 'map')}
+      </div>
     </div>
     <p class="intro" id="list-summary" aria-live="polite"></p>
     <div id="spot-results"></div>`;
@@ -248,21 +278,96 @@ function renderSpotRow(spot) {
             <strong class="row-value">${formatFt(final?.waveHeightFt)}</strong>
           </span>
           <span class="row-line row-detail">
-            <span>${ratingPhrase(best, view.rangeDays, view.time)}${drive ? ` · ${drive} drive` : ''}</span>
+            <span>${ratingPhrase(best, view.rangeDays, view.time)}${drive ? ` · <span class="row-drive">${icon('car', 14)} ${drive}</span>` : ''}</span>
             <span class="row-value">${formatPeriod(final?.swellPeriodS)}</span>
           </span>
-          ${best?.slot.windWarning ? `<span class="wind-warning">${best.slot.windWarning}</span>` : ''}
+          ${best ? windNote(best.slot) : ''}
         </span>
       </a>
     </li>`;
 }
 
+function renderMap(visible) {
+  const visibleIds = new Set(visible.map((spot) => spot.id));
+  const pick = bestTimeToGo(forecast, view, pickOptions());
+  const pins = layoutPins(forecast.filter((spot) => visibleIds.has(spot.id)));
+
+  const pinMarkup = pins
+    .map(({ spot, x, y }) => {
+      const best = bestDayInRange(spot, view.rangeDays, view.time);
+      const rating = best?.slot.rating ?? null;
+      const summary = `${spot.name}: ${ratingPhrase(best, view.rangeDays, view.time)}`;
+      const isPick = pick?.spot.id === spot.id;
+      return `
+        <a href="#${escapeHtml(spot.id)}" class="map-pin" aria-label="${escapeHtml(summary)}">
+          <title>${escapeHtml(summary)}</title>
+          <rect x="${x - 14}" y="${y - 10}" width="${MAP_WIDTH - x + 14}" height="20" fill="transparent" />
+          ${isPick ? `<circle cx="${x}" cy="${y}" r="13" class="map-pick-ring" />` : ''}
+          <circle cx="${x}" cy="${y}" r="9.5" class="map-dot badge-fill-${rating ?? 'none'}" />
+          <text x="${x}" y="${y + 3.8}" text-anchor="middle" class="map-number badge-text-${rating ?? 'none'}">${rating ?? MISSING}</text>
+          <text x="${x + 15}" y="${y + 4}" class="map-label${isPick ? ' map-label-pick' : ''}">${escapeHtml(spot.name)}</text>
+        </a>`;
+    })
+    .join('');
+
+  const legend = [1, 2, 3, 4, 5]
+    .map((rating) => `<span>${ratingBadge(rating)} ${ratingLabel(rating)}</span>`)
+    .join('');
+
+  const doralX = toX(home.lon);
+  const doralY = toY(home.lat);
+
+  return `
+    <div class="map-card">
+      <svg viewBox="0 0 ${MAP_WIDTH} ${MAP_HEIGHT.toFixed(0)}" role="group" aria-label="Map of the spots along the coast">
+        <defs>
+          <linearGradient id="sea" x1="0" x2="1" y1="0" y2="0">
+            <stop offset="0" stop-color="#bfe3e4" />
+            <stop offset="1" stop-color="#e3f3f1" />
+          </linearGradient>
+        </defs>
+        <rect width="${MAP_WIDTH}" height="${MAP_HEIGHT}" fill="url(#sea)" />
+        <g class="map-swells" fill="none" stroke="#8cc7ca" stroke-width="1.4" stroke-linecap="round">
+          <path d="M292 180c5-5 9-5 14 0s9 5 14 0" />
+          <path d="M285 316c5-5 9-5 14 0s9 5 14 0" />
+          <path d="M318 368c5-5 9-5 14 0s9 5 14 0" />
+          <path d="M300 530c5-5 9-5 14 0s9 5 14 0" />
+        </g>
+        <path d="${landPath()}" fill="#f1e3c6" stroke="#d9c49a" stroke-width="1.5" />
+        <g aria-hidden="true">
+          <text x="24" y="130" class="map-region">Florida</text>
+          <g transform="translate(46 240)" fill="none" stroke="#7c9a6a" stroke-width="2" stroke-linecap="round">
+            <path d="M0 26c1-9 2-15 6-22" stroke="#9a7f55" />
+            <path d="M6 4c-5-3-10-2-13 2M6 4c-2-5-7-7-11-5M6 4c3-5 8-6 12-3M6 4c5-1 9 1 11 6M6 4c0 3-1 6-3 8" />
+          </g>
+          <g transform="translate(62 395)" fill="none" stroke="#7c9a6a" stroke-width="2" stroke-linecap="round">
+            <path d="M0 22c1-8 2-13 5-19" stroke="#9a7f55" />
+            <path d="M5 3c-4-3-9-2-11 2M5 3c-2-4-6-6-10-4M5 3c3-4 7-5 10-2M5 3c4-1 8 1 9 5" />
+          </g>
+          <text x="${MAP_WIDTH - 14}" y="52" text-anchor="end" class="map-sea">Atlantic Ocean</text>
+          <g transform="translate(${MAP_WIDTH - 28} 18)" fill="none" stroke="#3f7f86" stroke-width="1.5" stroke-linecap="round">
+            <path d="M0 -8 3 0 0 8-3 0Z" fill="#3f7f86" stroke="none" />
+            <text x="0" y="-10" text-anchor="middle" class="map-north" stroke="none">N</text>
+          </g>
+        </g>
+        <g aria-label="${escapeHtml(home.label)}">
+          <circle cx="${doralX}" cy="${doralY}" r="4.500" class="map-home" />
+          <text x="${doralX - 9}" y="${doralY + 4}" text-anchor="end" class="map-home-label">${escapeHtml(home.label)}</text>
+        </g>
+        ${pinMarkup}
+      </svg>
+      <div class="map-legend">${legend}</div>
+      <p class="intro">An illustration, not to scale. Tap a spot to open it. The ring marks the best time to go.</p>
+    </div>`;
+}
+
 function isSelected(button) {
-  const { range, time, sort, worth, drive } = button.dataset;
+  const { range, time, sort, worth, drive, display } = button.dataset;
   if (range) return Number(range) === view.rangeDays;
   if (time) return time === view.time;
   if (sort) return sort === view.sort;
   if (worth) return view.worthSurfingOnly;
+  if (display) return display === view.display;
   return Number(drive) === view.maxDriveMinutes;
 }
 
@@ -292,10 +397,7 @@ function filterSummaryText() {
 }
 
 function updateList() {
-  const visible = applyView(forecast, view, {
-    homeId: profile.home,
-    worthSurfingRating: profile.worthSurfingRating,
-  });
+  const visible = applyView(forecast, view, pickOptions());
 
   updateChips();
   document.querySelector('#top-pick').innerHTML = renderTopPick();
@@ -304,9 +406,13 @@ function updateList() {
   const countText = visible.length === forecast.length ? '' : ` ${visible.length} of ${forecast.length} spots.`;
   document.querySelector('#list-summary').textContent = `${listSummaryText()}${countText}`;
 
-  document.querySelector('#spot-results').innerHTML = visible.length
-    ? `<ul class="spot-list">${visible.map(renderSpotRow).join('')}</ul>`
-    : '<p class="message">No spots match. Try looking further ahead or removing a filter.</p>';
+  let results = '<p class="message">No spots match. Try looking further ahead or removing a filter.</p>';
+  if (visible.length) {
+    results = view.display === 'map'
+      ? renderMap(visible)
+      : `<ul class="spot-list">${visible.map(renderSpotRow).join('')}</ul>`;
+  }
+  document.querySelector('#spot-results').innerHTML = results;
 }
 
 function renderList() {
@@ -315,15 +421,19 @@ function renderList() {
   document.title = 'Surf Radar';
 }
 
+function stat(iconName, label, value) {
+  return `<div>${icon(iconName, 18)}<dt>${label}</dt><dd>${value}</dd></div>`;
+}
+
 function renderNow(spot) {
   if (!spot.now) return '';
   return `
     <section class="now">
-      <h2>Forecast right now</h2>
+      <h2>${icon('wave', 18)} Forecast right now</h2>
       <dl>
-        <div><dt>Waves</dt><dd>${formatFt(spot.now.waveHeightFt)}</dd></div>
-        <div><dt>Swell period</dt><dd>${formatPeriod(spot.now.swellPeriodS)}</dd></div>
-        <div><dt>Wind</dt><dd>${formatWind(spot.now.wind)}</dd></div>
+        ${stat('wave', 'Waves', formatFt(spot.now.waveHeightFt))}
+        ${stat('timer', 'Swell period', formatPeriod(spot.now.swellPeriodS))}
+        ${stat('wind', 'Wind', formatWind(spot.now.wind))}
       </dl>
     </section>`;
 }
@@ -353,12 +463,12 @@ function renderBuoy(spot) {
   const period = Number.isFinite(latest.dominantPeriodS) ? `${Math.round(latest.dominantPeriodS)} s` : MISSING;
   return `
     <section class="now">
-      <h2>Nearest buoy</h2>
+      <h2>${icon('buoy', 18)} Nearest buoy</h2>
       <p class="intro">${escapeHtml(name)} (${escapeHtml(id)}), ${Math.round(distanceKm)} km away. Measured ${timeAgo(latest.time)}.</p>
       <dl>
-        <div><dt>Waves</dt><dd>${formatFt(latest.waveHeightFt)}</dd></div>
-        <div><dt>Main period</dt><dd>${period}</dd></div>
-        <div><dt>Direction</dt><dd>${direction}</dd></div>
+        ${stat('wave', 'Waves', formatFt(latest.waveHeightFt))}
+        ${stat('timer', 'Main period', period)}
+        ${stat('wind', 'Direction', direction)}
       </dl>
       <p class="buoy-note">${buoyExplanation(spot)}</p>
     </section>`;
@@ -368,7 +478,8 @@ function renderWindowLine(slot) {
   const label = profile.windows[slot.name].label;
   return `
     <li>
-      <strong>${label}:</strong> rated ${slot.rating ?? MISSING} · ${formatFt(slot.final.waveHeightFt)} · ${formatPeriod(slot.final.swellPeriodS)} · ${formatWind(slot.wind)}${slot.windWarning ? ` · <span class="wind-warning-inline">${slot.windWarning}</span>` : ''}
+      ${icon(TIME_ICONS[slot.name], 15)}
+      <span><strong>${label}:</strong> rated ${slot.rating ?? MISSING} · ${formatFt(slot.final.waveHeightFt)} · ${formatPeriod(slot.final.swellPeriodS)} · ${formatWind(slot.wind)}${slot.windWarning ? ` · <span class="wind-warning-inline">${slot.windWarning}</span>` : ''}</span>
     </li>`;
 }
 
@@ -399,8 +510,8 @@ function renderDay(day) {
               <span>${slot.confidence}${timeNote}</span>
               <span class="row-value">${formatPeriod(slot.final.swellPeriodS)} · ${formatWind(slot.wind)}</span>
             </span>
-            ${slot.windWarning ? `<span class="wind-warning">${slot.windWarning}</span>` : ''}
-            ${day.flags.map((flag) => `<span class="day-flag">${escapeHtml(flag.text)}</span>`).join('')}
+            ${windNote(slot)}
+            ${day.flags.map((flag) => `<span class="day-flag">${icon('storm', 14)} ${escapeHtml(flag.text)}</span>`).join('')}
           </span>
         </summary>
         <div class="day-more">
@@ -413,15 +524,18 @@ function renderDay(day) {
 
 function renderSpot(spot) {
   main.innerHTML = `
-    <a class="back" href="#">← All spots</a>
+    <a class="back" href="#">${icon('back')} All spots</a>
     <h1 class="spot-title">${escapeHtml(spot.name)}</h1>
-    <p class="spot-summary"><span id="spot-best">${bestDayText(spot)}</span><br />${driveText(spot)}</p>
+    <p class="spot-summary">
+      <span id="spot-best">${bestDayText(spot)}</span><br />
+      <span class="spot-drive">${icon('car', 15)} ${driveText(spot)}</span>
+    </p>
     ${tropicalBanner()}
     ${renderCams(spot)}
     ${renderNow(spot)}
     ${renderBuoy(spot)}
     <section>
-      <h2>Day by day</h2>
+      <h2>${icon('sun', 18)} Day by day</h2>
       <div class="controls">${timeRow()}</div>
       <p class="intro">Tap a day to compare morning, midday and evening. Wind doesn't affect the rating.</p>
       <ol class="day-list" id="day-list">${spot.days.map(renderDay).join('')}</ol>
@@ -459,18 +573,23 @@ function refresh() {
 main.addEventListener('click', (event) => {
   const button = event.target.closest('.chip');
   if (!button) return;
-  const { range, time, sort, worth, drive } = button.dataset;
+  const { range, time, sort, worth, drive, display } = button.dataset;
   if (range) view.rangeDays = Number(range);
   else if (time) view.time = time;
   else if (sort) view.sort = sort;
   else if (worth) view.worthSurfingOnly = !view.worthSurfingOnly;
+  else if (display) view.display = display;
   else view.maxDriveMinutes = Number(drive) === view.maxDriveMinutes ? null : Number(drive);
   saveView();
   refresh();
 });
 
 async function load() {
-  main.innerHTML = '<p class="message">Loading the forecast…</p>';
+  main.innerHTML = `
+    <div class="message loading">
+      <svg viewBox="0 0 120 30" width="120" height="30" aria-hidden="true"><path d="M0 15c15-14 25-14 40 0s25 14 40 0 25-14 40 0" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" /></svg>
+      <p>Checking the waves…</p>
+    </div>`;
   status.textContent = '';
   try {
     forecast = await loadForecast(spots, buoys, settings);

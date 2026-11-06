@@ -17,6 +17,7 @@
     <script type="module">
       import { buoys } from '../buoys.js';
       import { windWarning } from '../src/wind.js';
+      import { landPath, layoutPins, MAP_HEIGHT, MAP_WIDTH } from '../src/map.js';
       import { settings } from '../settings.js';
       import { spots } from '../spots.js';
       import { computeBias, correctionFactor, distanceKm, distanceStrength } from '../src/correction.js';
@@ -243,7 +244,7 @@
       same('filters: no ratings gives no best day', bestDay([fakeDay(0, null)], 'morning'), null);
 
       same('filters: nothing saved gives the defaults', restoreView(null), DEFAULT_VIEW);
-      same('filters: restores saved choices', restoreView({ rangeDays: 5, time: 'evening', sort: 'best', worthSurfingOnly: true, maxDriveMinutes: 120 }), { rangeDays: 5, time: 'evening', sort: 'best', worthSurfingOnly: true, maxDriveMinutes: 120 });
+      same('filters: restores saved choices', restoreView({ rangeDays: 5, time: 'evening', sort: 'best', worthSurfingOnly: true, maxDriveMinutes: 120 }), { rangeDays: 5, time: 'evening', sort: 'best', worthSurfingOnly: true, maxDriveMinutes: 120, display: 'list' });
       same('filters: ignores unrecognized saved choices', restoreView({ rangeDays: 4, time: 'night', sort: 'toString', worthSurfingOnly: 'yes', maxDriveMinutes: 45 }), DEFAULT_VIEW);
       same('filters: choices saved by the older version are ignored safely', restoreView({ sort: 'best', dayIndex: 3 }), { ...DEFAULT_VIEW, sort: 'best' });
 
@@ -461,6 +462,17 @@
       const lateDay = fakeDay(0, 1, 1, 5); lateDay.slots.evening.tooLate = true;
       same('time: all day skips a window too late to reach', slotForTime(lateDay, ALL_DAY).name, 'morning');
       same('time: look-ahead skips a window too late to reach', bestDay([lateDay, fakeDay(1, 1, 1, 3)], 'evening').day.dayIndex, 1);
+      // --- Map ---
+      const pins = layoutPins(spots);
+      same('map: every spot gets a pin', pins.length, spots.length);
+      check('map: pins keep their north-to-south order', pins.every((pin, index) => index === 0 || pin.y > pins[index - 1].y));
+      check('map: neighboring pins do not overlap', pins.every((pin, index) => index === 0 || pin.y - pins[index - 1].y >= 20));
+      check('map: every pin fits on the map', pins.every((pin) => pin.y > 0 && pin.y < MAP_HEIGHT && pin.x > 0 && pin.x < MAP_WIDTH));
+      check('map: pins stay close to their true position', pins.every((pin) => Math.abs(pin.y - (28.75 - pin.spot.beach.lat) * 190) < 45));
+      check('map: the land outline is closed', landPath().startsWith('M0 0') && landPath().endsWith('Z'));
+      same('view: a saved map choice is restored', restoreView({ display: 'map' }).display, 'map');
+      same('view: an unknown display falls back to the list', restoreView({ display: 'globe' }).display, 'list');
+      check('spots: every spot has beach coordinates', spots.every((spot) => Number.isFinite(spot.beach?.lat) && Number.isFinite(spot.beach?.lon)));
       // --- Default view ---
       same('view: the default answers when to go', [DEFAULT_VIEW.time, DEFAULT_VIEW.rangeDays, DEFAULT_VIEW.sort], [ALL_DAY, 5, 'best']);
 
