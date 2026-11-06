@@ -15,11 +15,14 @@
     <ul id="results"></ul>
 
     <script type="module">
+      import { buoys } from '../buoys.js';
       import { settings } from '../settings.js';
       import { spots } from '../spots.js';
+      import { computeBias, correctionFactor, distanceKm, distanceStrength } from '../src/correction.js';
+      import { parseNdbcText } from '../src/sources/ndbc.js';
       import { blendValues, blendReadings } from '../src/blend.js';
       import { confidenceLabel, HIGH, MEDIUM, LOW } from '../src/confidence.js';
-      import { averageDirection, buildSpotForecast, localHourKey } from '../src/pipeline.js';
+      import { averageDirection, buildBuoyStatus, buildSpotForecast, localHourKey } from '../src/pipeline.js';
       import { ALL_DAY, applyView, bestDay, bestDayInRange, DEFAULT_VIEW, formatDrive, formatDriveShort, restoreView, slotForTime } from '../src/filters.js';
       import { interpolate, scoreConditions, scoreDay, toRating } from '../src/rating.js';
       import { parseMarineLocation, parseWindLocation } from '../src/sources/open-meteo.js';
@@ -239,6 +242,75 @@
       same('filters: restores saved choices', restoreView({ rangeDays: 5, time: 'evening', sort: 'best', worthSurfingOnly: true, maxDriveMinutes: 120 }), { rangeDays: 5, time: 'evening', sort: 'best', worthSurfingOnly: true, maxDriveMinutes: 120 });
       same('filters: ignores unrecognized saved choices', restoreView({ rangeDays: 4, time: 'night', sort: 'toString', worthSurfingOnly: 'yes', maxDriveMinutes: 45 }), DEFAULT_VIEW);
       same('filters: choices saved by the older version are ignored safely', restoreView({ sort: 'best', dayIndex: 3 }), { ...DEFAULT_VIEW, sort: 'best' });
+
+      // --- Buoys ---
+      // Real format from NDBC, including a row with no wave data and a missing period.
+      const ndbcSample = [
+        '#YY  MM DD hh mm WDIR WSPD GST  WVHT   DPD   APD MWD   PRES  ATMP  WTMP  DEWP  VIS PTDY  TIDE',
+        '#yr  mo dy hr mn degT m/s  m/s     m   sec   sec degT   hPa  degC  degC  degC  nmi  hPa    ft',
+        '2026 11 06 19 40 100 5.0 6.0    MM    MM    MM  MM   1016    MM  29.2    MM   MM   MM    MM',
+        '2026 11 06 19 26  MM   MM   MM   1.0    10   6.7  58     MM    MM  29.2    MM   MM   MM    MM',
+        '2026 11 06 18 56  MM   MM   MM   1.2    MM   6.7  67     MM    MM  29.0    MM   MM   MM    MM',
+        '',
+      ].join('\n');
+      const parsed = parseNdbcText(ndbcSample);
+      same('buoys: skips rows with no wave height', parsed.length, 2);
+      same('buoys: newest reading comes first', parsed[0].time, '2026-11-06T19:26:00.000Z');
+      same('buoys: converts meters to feet', parsed[0].waveHeightFt, 3.28084);
+      same('buoys: reads period and direction', [parsed[0].dominantPeriodS, parsed[0].averagePeriodS, parsed[0].directionDeg], [10, 6.7, 58]);
+      same('buoys: a missing value stays empty', parsed[1].dominantPeriodS, null);
+      same('buoys: stops at the reading limit', parseNdbcText(ndbcSample, 1).length, 1);
+      same('buoys: an empty file gives no readings', parseNdbcText(''), []);
+
+      const buoyRules = settings.buoyCorrection;
+      const buoyNow = new Date('2026-11-06T20:00:00Z');
+      const reading = (minutesAgo, waveHeightFt) => ({ time: new Date(buoyNow - minutesAgo * 60000).toISOString(), waveHeightFt });
+      const flatModel = (ft) => () => ft;
+      same('buoys: ratio is measured over model', computeBias([reading(30, 3)], flatModel(4), buoyNow, buoyRules).ratio, 0.75);
+      same('buoys: averages the latest readings', computeBias([reading(10, 3), reading(40, 4), reading(70, 5), reading(100, 100)], flatModel(4), buoyNow, buoyRules).measuredFt, 4);
+      same('buoys: ignores readings that are too old', computeBias([reading(200, 3)], flatModel(4), buoyNow, buoyRules), null);
+      same('buoys: skips hours with no model value', computeBias([reading(10, 3)], flatModel(null), buoyNow, buoyRules), null);
+      same('buoys: no readings gives no comparison', computeBias([], flatModel(4), buoyNow, buoyRules), null);
+      same('buoys: a low reading can only lower it so far', computeBias([reading(10, 1)], flatModel(4), buoyNow, buoyRules).ratio, buoyRules.minRatio);
+      same('buoys: a high reading can only raise it so far', computeBias([reading(10, 9)], flatModel(4), buoyNow, buoyRules).ratio, buoyRules.maxRatio);
+
+      same('buoys: full strength close by', distanceStrength(30, buoyRules), 1);
+      same('buoys: half strength midway', distanceStrength(80, buoyRules), 0.5);
+      same('buoys: no strength far away', distanceStrength(200, buoyRules), 0);
+      same('buoys: full adjustment right now', correctionFactor(0.8, 0, 1, buoyRules), 0.8);
+      same('buoys: half the adjustment at 24 hours', correctionFactor(0.8, 24, 1, buoyRules), 0.9);
+      same('buoys: no adjustment at 48 hours', correctionFactor(0.8, 48, 1, buoyRules), 1);
+      same('buoys: no adjustment beyond 48 hours', correctionFactor(0.8, 90, 1, buoyRules), 1);
+      same('buoys: distance weakens the adjustment', correctionFactor(0.8, 0, 0.5, buoyRules), 0.9);
+      check('buoys: one degree of latitude is about 111 km', Math.abs(distanceKm({ lat: 26, lon: -80 }, { lat: 27, lon: -80 }) - 111) < 1);
+
+      // Spot right next to a buoy that reads 20% below the models, at 7 am on the first day.
+      const nearby = { id: 'test', name: 'Test', lat: 26, lon: -80 };
+      const buoyTimes = { times, models: { only: { waveHeightFt: times.map(() => 5), swellPeriodS: times.map(() => 8), wavePeriodS: times.map(() => 6) } } };
+      const at7am = new Date('2026-11-06T12:30:00Z');
+      const status = buildBuoyStatus({ id: 'b', name: 'B', lat: 26, lon: -80 }, [{ time: '2026-11-06T12:00:00Z', waveHeightFt: 4 }], buoyTimes, settings, at7am);
+      same('buoys: compares with the models at the buoy', [status.bias.modelFt, status.bias.ratio], [5, 0.8]);
+      same('buoys: keeps the latest reading to show', status.latest.waveHeightFt, 4);
+      same('buoys: no readings gives no status', buildBuoyStatus({ id: 'b' }, [], buoyTimes, settings, at7am), null);
+      same('buoys: an old reading keeps the status but no correction', buildBuoyStatus({ id: 'b' }, [{ time: '2026-11-06T01:00:00Z', waveHeightFt: 4 }], buoyTimes, settings, at7am).bias, null);
+
+      const corrected = buildSpotForecast(nearby, data, settings, '2026-11-06T07:00', status);
+      same('buoys: forecast right now gets the full adjustment', corrected.now.waveHeightFt, 3.2);
+      same('buoys: blended values are kept as they were', corrected.days[0].blended.morning.waveHeightFt, 4);
+      // The morning window's middle, 8 am, is 1 hour ahead of 7 am.
+      const thisMorningFt = 4 * (1 - 0.2 * (1 - 1 / 48));
+      same('buoys: this morning is adjusted almost fully', corrected.days[0].final.morning.waveHeightFt, thisMorningFt);
+      same('buoys: period is not adjusted', corrected.days[0].final.morning.swellPeriodS, 7);
+      same('buoys: ratings use the adjusted height', corrected.days[0].slots.morning.score, scoreConditions({ waveHeightFt: thisMorningFt, swellPeriodS: 7 }, profile));
+      const tomorrowMidday = corrected.days[1].final.midday.waveHeightFt;
+      // 12 noon tomorrow is 29 hours ahead, so 1 - 0.2 x (1 - 29/48) of the 2.5 ft forecast.
+      same('buoys: the adjustment fades over time', tomorrowMidday, 2.5 * (1 - 0.2 * (1 - 29 / 48)));
+      same('buoys: a passed window is not adjusted', buildSpotForecast(nearby, data, settings, '2026-11-06T15:00', status).days[0].final.morning.waveHeightFt, 4);
+      same('buoys: no buoy means no adjustment', buildSpotForecast(nearby, data, settings, '2026-11-06T07:00').days[0].final.morning.waveHeightFt, 4);
+      const farAway = { ...nearby, lat: 30 };
+      same('buoys: too far away means no adjustment', buildSpotForecast(farAway, data, settings, '2026-11-06T07:00', status).days[0].final.morning.waveHeightFt, 4);
+
+      check('buoys: every spot has a known buoy', spots.every((spot) => buoys.some((buoy) => buoy.id === spot.buoyId)));
 
       // --- Spots ---
       check('spots: every spot has a drive time from each starting point', spots.every((spot) => Object.keys(settings.homes).every((home) => Number.isFinite(spot.driveMinutes[home]))));

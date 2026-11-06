@@ -1,0 +1,38 @@
+name: Fetch buoy data
+
+# NDBC can't be read directly from a browser, so this saves the readings for the site.
+# They go on their own branch, replaced each time, so code history stays clean and the
+# site doesn't rebuild every hour.
+
+on:
+  schedule:
+    - cron: '17 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Fetch readings
+        run: node scripts/fetch-buoys.js buoy-data/buoys.json
+
+      - name: Publish to the buoy-data branch
+        working-directory: buoy-data
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git init -q -b buoy-data
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add buoys.json
+          git commit -q -m 'Update buoy data'
+          git push -q -f "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" buoy-data

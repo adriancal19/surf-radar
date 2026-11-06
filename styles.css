@@ -272,6 +272,16 @@ h2 {
   font-weight: 600;
 }
 
+.now .intro {
+  margin-bottom: 6px;
+}
+
+.buoy-note {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
 .day summary {
   list-style: none;
 }

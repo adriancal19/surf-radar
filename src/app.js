@@ -1,6 +1,7 @@
 // Draws the page. The spot list is the home view; `#cocoa-beach` opens that spot's forecast,
 // so the back button works and a spot can be linked to directly.
 
+import { buoys } from '../buoys.js';
 import { settings } from '../settings.js';
 import { spots } from '../spots.js';
 import { LOW } from './confidence.js';
@@ -251,12 +252,48 @@ function renderNow(spot) {
   if (!spot.now) return '';
   return `
     <section class="now">
-      <h2>Right now</h2>
+      <h2>Forecast right now</h2>
       <dl>
         <div><dt>Waves</dt><dd>${formatFt(spot.now.waveHeightFt)}</dd></div>
         <div><dt>Swell period</dt><dd>${formatPeriod(spot.now.swellPeriodS)}</dd></div>
         <div><dt>Wind</dt><dd>${formatWind(spot.now.wind)}</dd></div>
       </dl>
+    </section>`;
+}
+
+function timeAgo(isoTime) {
+  const minutes = Math.max(0, Math.round((Date.now() - new Date(isoTime)) / 60000));
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.round(minutes / 60);
+  return `${hours} hr ago`;
+}
+
+function buoyExplanation(spot) {
+  const { bias } = spot.buoy;
+  const { fadeHours, maxAgeHours } = settings.buoyCorrection;
+  if (!bias) return `No reading in the last ${maxAgeHours} hours, so the forecast isn't adjusted.`;
+  const percent = Math.round((spot.nowFactor - 1) * 100);
+  const comparison = `Models read ${formatFt(bias.modelFt)} at this buoy, against ${formatFt(bias.measuredFt)} measured.`;
+  if (Math.abs(percent) < 3) return `${comparison} That's close, so this forecast barely changes.`;
+  const direction = percent < 0 ? 'down' : 'up';
+  return `${comparison} This forecast is adjusted ${direction} ${Math.abs(percent)}% now, fading out over ${fadeHours} hours.`;
+}
+
+function renderBuoy(spot) {
+  if (!spot.buoy) return '';
+  const { latest, name, id, distanceKm } = spot.buoy;
+  const direction = Number.isFinite(latest.directionDeg) ? `From ${compass(latest.directionDeg)}` : MISSING;
+  const period = Number.isFinite(latest.dominantPeriodS) ? `${Math.round(latest.dominantPeriodS)} s` : MISSING;
+  return `
+    <section class="now">
+      <h2>Nearest buoy</h2>
+      <p class="intro">${escapeHtml(name)} (${escapeHtml(id)}), ${Math.round(distanceKm)} km away. Measured ${timeAgo(latest.time)}.</p>
+      <dl>
+        <div><dt>Waves</dt><dd>${formatFt(latest.waveHeightFt)}</dd></div>
+        <div><dt>Main period</dt><dd>${period}</dd></div>
+        <div><dt>Direction</dt><dd>${direction}</dd></div>
+      </dl>
+      <p class="buoy-note">${buoyExplanation(spot)}</p>
     </section>`;
 }
 
@@ -305,6 +342,7 @@ function renderSpot(spot) {
     <h1 class="spot-title">${escapeHtml(spot.name)}</h1>
     <p class="spot-summary"><span id="spot-best">${bestDayText(spot)}</span><br />${driveText(spot)}</p>
     ${renderNow(spot)}
+    ${renderBuoy(spot)}
     <section>
       <h2>Day by day</h2>
       <div class="controls">${timeRow()}</div>
@@ -358,7 +396,7 @@ async function load() {
   main.innerHTML = '<p class="message">Loading the forecast…</p>';
   status.textContent = '';
   try {
-    forecast = await loadForecast(spots, settings);
+    forecast = await loadForecast(spots, buoys, settings);
     const time = new Intl.DateTimeFormat('en-US', { timeStyle: 'short' }).format(new Date());
     const hasWind = forecast.some((spot) => Number.isFinite(spot.days[0].wind.morning.speedMph));
     status.textContent = `Updated ${time}${hasWind ? '' : ' · Wind unavailable'}`;

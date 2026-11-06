@@ -15,6 +15,22 @@ export const settings = {
     { id: 'ecmwf_wam025', label: 'ECMWF' },
   ],
 
+  // The live buoy correction. See src/correction.js.
+  buoyCorrection: {
+    dataUrl: 'https://raw.githubusercontent.com/adriancal19/surf-radar/buoy-data/buoys.json',
+    readingsToAverage: 3,
+    // Older readings are ignored. With none left, the forecast isn't adjusted.
+    maxAgeHours: 3,
+    // The most a forecast can be scaled: 0.7 is 30% down, 1.3 is 30% up.
+    minRatio: 0.7,
+    maxRatio: 1.3,
+    // The adjustment fades to nothing this far ahead.
+    fadeHours: 48,
+    // Full strength within fullStrengthKm of the buoy, fading to none at zeroStrengthKm.
+    fullStrengthKm: 40,
+    zeroStrengthKm: 120,
+  },
+
   // Starting points for drive times, kept general on purpose because this code is public.
   // Each one needs matching times under driveMinutes in spots.js.
   homes: {

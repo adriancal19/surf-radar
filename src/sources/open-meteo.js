@@ -64,15 +64,20 @@ export function parseWindLocation(location, times) {
   };
 }
 
-export async function fetchOpenMeteo(spots, settings) {
+// Wave models only, for any list of points with lat and lon.
+export async function fetchMarine(points, settings) {
   const modelIds = settings.models.map((model) => model.id);
-
-  const marineRequest = getJson(MARINE_URL, {
-    ...locationParams(spots, settings),
+  const json = await getJson(MARINE_URL, {
+    ...locationParams(points, settings),
     hourly: Object.values(MARINE_FIELDS).join(','),
     models: modelIds.join(','),
     length_unit: 'imperial',
   });
+  return asList(json).map((location) => parseMarineLocation(location, modelIds));
+}
+
+export async function fetchOpenMeteo(spots, settings) {
+  const marineRequest = fetchMarine(spots, settings);
 
   // Wind is display-only, so a wind failure shouldn't take down the whole forecast.
   const windRequest = getJson(WEATHER_URL, {
@@ -84,15 +89,11 @@ export async function fetchOpenMeteo(spots, settings) {
     return null;
   });
 
-  const [marineJson, windJson] = await Promise.all([marineRequest, windRequest]);
-  const marine = asList(marineJson);
+  const [marine, windJson] = await Promise.all([marineRequest, windRequest]);
   const wind = windJson && asList(windJson);
 
-  return spots.map((_, index) => {
-    const parsed = parseMarineLocation(marine[index], modelIds);
-    return {
-      ...parsed,
-      wind: wind ? parseWindLocation(wind[index], parsed.times) : null,
-    };
-  });
+  return marine.map((parsed, index) => ({
+    ...parsed,
+    wind: wind ? parseWindLocation(wind[index], parsed.times) : null,
+  }));
 }
