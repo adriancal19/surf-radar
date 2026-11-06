@@ -4,12 +4,13 @@
 //   raw       per-model values for each window
 //   blended   models combined
 //   final     what gets rated (same as blended until Phase 1.5 adds the buoy correction)
-//   score     unrounded; rating is the rounded version
+//   slots     one per time of day: final values, wind, score, rating, spread and confidence
+//   score     the whole day, weighted by the profile; rating is the rounded version
 //   flags     empty until Phase 3 adds the tropical flag
 
 import { blendReadings } from './blend.js';
 import { confidenceLabel } from './confidence.js';
-import { scoreDay, toRating } from './rating.js';
+import { scoreConditions, scoreDay, toRating } from './rating.js';
 import { fetchOpenMeteo } from './sources/open-meteo.js';
 
 const average = (values) => {
@@ -57,11 +58,12 @@ function windAt(wind, indexes) {
   };
 }
 
-function buildDay(data, date, dayIndex, settings, profile) {
+function buildDay(data, date, dayIndex, settings, profile, nowKey) {
   const raw = Object.fromEntries(Object.keys(data.models).map((modelId) => [modelId, {}]));
   const blended = {};
   const final = {};
   const wind = {};
+  const slots = {};
   let spreadFt = null;
 
   for (const [name, window] of Object.entries(profile.windows)) {
@@ -76,6 +78,19 @@ function buildDay(data, date, dayIndex, settings, profile) {
     final[name] = { ...values };
     wind[name] = windAt(data.wind, indexes);
     if (heightSpreadFt !== null) spreadFt = Math.max(spreadFt ?? 0, heightSpreadFt);
+
+    const slotScore = scoreConditions(final[name], profile);
+    slots[name] = {
+      name,
+      // Already over, so it shouldn't be suggested as a time to go.
+      past: dateOf(nowKey) === date && hourOf(nowKey) >= window.endHour,
+      final: final[name],
+      wind: wind[name],
+      score: slotScore,
+      rating: toRating(slotScore),
+      spreadFt: heightSpreadFt,
+      confidence: confidenceLabel({ dayIndex, spreadFt: heightSpreadFt }, settings.confidence),
+    };
   }
 
   const score = scoreDay(final, profile);
@@ -86,6 +101,7 @@ function buildDay(data, date, dayIndex, settings, profile) {
     blended,
     final,
     wind,
+    slots,
     spreadFt,
     score,
     rating: toRating(score),
@@ -108,7 +124,7 @@ export function buildSpotForecast(spot, data, settings, nowKey) {
   return {
     ...spot,
     now: buildNow(data, nowKey),
-    days: dates.map((date, dayIndex) => buildDay(data, date, dayIndex, settings, profile)),
+    days: dates.map((date, dayIndex) => buildDay(data, date, dayIndex, settings, profile, nowKey)),
   };
 }
 

@@ -3,7 +3,7 @@
 
 export const HIGH = 'High confidence';
 export const MEDIUM = 'Medium confidence';
-export const LOW = 'Low confidence (trend)';
+export const LOW = 'Low confidence';
 
 export function confidenceLabel({ dayIndex, spreadFt }, rules) {
   const byLeadTime =

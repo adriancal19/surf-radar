@@ -1,4 +1,4 @@
-// Sorting and filtering for the spot list, plus the drive time and best-day helpers.
+// Sorting and filtering for the spot list, plus the drive time and best-time helpers.
 // No page drawing here, so it's easy to test.
 
 // How far ahead to look, counting today. "3 days" is today, tomorrow and the day after.
@@ -7,6 +7,15 @@ export const RANGES = [
   { days: 3, label: '3 days' },
   { days: 5, label: '5 days' },
   { days: 7, label: '7 days' },
+];
+
+// `all` finds the best time of day. The others match the windows in settings.js.
+export const ALL_DAY = 'all';
+export const TIMES = [
+  { id: 'morning', label: 'Morning' },
+  { id: 'midday', label: 'Midday' },
+  { id: 'evening', label: 'Evening' },
+  { id: ALL_DAY, label: 'All day' },
 ];
 
 export const SORTS = {
@@ -22,6 +31,7 @@ export const DRIVE_LIMITS = [
 
 export const DEFAULT_VIEW = {
   rangeDays: 1,
+  time: 'morning',
   sort: 'north-south',
   worthSurfingOnly: false,
   maxDriveMinutes: null,
@@ -50,21 +60,44 @@ export function formatDriveShort(minutes) {
   return remainder === 0 ? `${hours}h` : `${hours}h ${remainder}m`;
 }
 
-// The highest-rated day. If several tie, the soonest wins, since it's the most reliable.
-export function bestDay(days) {
+// One day's conditions for the chosen time. For all day, that's its highest-scoring window
+// that hasn't passed yet. If windows tie, the earliest wins.
+export function slotForTime(day, time) {
+  if (time !== ALL_DAY) return day.slots[time];
+  const slots = Object.values(day.slots);
+  const upcoming = slots.filter((slot) => !slot.past);
+  const choices = upcoming.length ? upcoming : slots;
+  return choices.reduce(
+    (best, slot) => ((slot.score ?? -Infinity) > (best.score ?? -Infinity) ? slot : best),
+    choices[0],
+  );
+}
+
+function highestRated(days, time) {
   let best = null;
   for (const day of days) {
-    if (day.rating !== null && (best === null || day.rating > best.rating)) best = day;
+    const slot = slotForTime(day, time);
+    if (Number.isFinite(slot?.rating) && (best === null || slot.rating > best.slot.rating)) {
+      best = { day, slot };
+    }
   }
   return best;
 }
 
-export const bestDayInRange = (spot, rangeDays) => bestDay(spot.days.slice(0, rangeDays));
+// The highest-rated day for the chosen time, as { day, slot }. If several days tie, the
+// soonest wins, since it's the most reliable. Times that have passed only count if nothing
+// else is left.
+export function bestDay(days, time) {
+  const upcoming = days.filter((day) => !slotForTime(day, time)?.past);
+  return highestRated(upcoming, time) ?? highestRated(days, time);
+}
+
+export const bestDayInRange = (spot, rangeDays, time) => bestDay(spot.days.slice(0, rangeDays), time);
 
 // Returns the spots to show, in order. Each spot counts as its best day in the range.
 // `best` groups spots by rating, closest first within each rating.
 export function applyView(forecast, view, { homeId, worthSurfingRating }) {
-  const ratingOf = (spot) => bestDayInRange(spot, view.rangeDays)?.rating ?? 0;
+  const ratingOf = (spot) => bestDayInRange(spot, view.rangeDays, view.time)?.slot.rating ?? 0;
   const driveOf = (spot) => driveMinutes(spot, homeId) ?? Infinity;
 
   const visible = forecast.filter((spot) => {
@@ -84,6 +117,7 @@ export function restoreView(saved) {
   const view = { ...DEFAULT_VIEW };
   if (!saved || typeof saved !== 'object') return view;
   if (RANGES.some((range) => range.days === saved.rangeDays)) view.rangeDays = saved.rangeDays;
+  if (TIMES.some((time) => time.id === saved.time)) view.time = saved.time;
   if (Object.hasOwn(SORTS, saved.sort)) view.sort = saved.sort;
   if (saved.worthSurfingOnly === true) view.worthSurfingOnly = true;
   if (DRIVE_LIMITS.some((limit) => limit.minutes === saved.maxDriveMinutes)) {

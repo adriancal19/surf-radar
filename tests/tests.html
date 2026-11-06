@@ -20,7 +20,7 @@
       import { blendValues, blendReadings } from '../src/blend.js';
       import { confidenceLabel, HIGH, MEDIUM, LOW } from '../src/confidence.js';
       import { averageDirection, buildSpotForecast, localHourKey } from '../src/pipeline.js';
-      import { applyView, bestDay, bestDayInRange, DEFAULT_VIEW, formatDrive, formatDriveShort, restoreView } from '../src/filters.js';
+      import { ALL_DAY, applyView, bestDay, bestDayInRange, DEFAULT_VIEW, formatDrive, formatDriveShort, restoreView, slotForTime } from '../src/filters.js';
       import { interpolate, scoreConditions, scoreDay, toRating } from '../src/rating.js';
       import { parseMarineLocation, parseWindLocation } from '../src/sources/open-meteo.js';
 
@@ -133,13 +133,44 @@
       const twoModelData = { ...data, models: { ...data.models, other: { waveHeightFt: heights.map((h) => h + 1), swellPeriodS: times.map(() => 7), wavePeriodS: times.map(() => 5) } } };
       same('pipeline: two models produce a spread', buildSpotForecast({ id: 'test' }, twoModelData, settings, '2026-11-06T07:00').days[0].spreadFt, 1);
 
+      const afternoon = buildSpotForecast({ id: 'test' }, data, settings, '2026-11-06T15:00').days;
+      same('pipeline: at 3 pm the morning has passed', afternoon[0].slots.morning.past, true);
+      same('pipeline: at 3 pm the midday has passed', afternoon[0].slots.midday.past, true);
+      same('pipeline: at 3 pm the evening is still open', afternoon[0].slots.evening.past, false);
+      same('pipeline: tomorrow has not passed', afternoon[1].slots.morning.past, false);
+      same('pipeline: a window in progress has not passed', firstDay.slots.morning.past, false);
+      same('pipeline: each time of day gets its own slot', Object.keys(firstDay.slots), ['morning', 'midday', 'evening']);
+      same('pipeline: morning slot has its own rating', firstDay.slots.morning.rating, 5);
+      same('pipeline: midday slot has its own rating', firstDay.slots.midday.rating, 3);
+      same('pipeline: evening slot covers 2 pm to 6 pm', firstDay.slots.evening.final.waveHeightFt, 99);
+      same('pipeline: evening does not change the whole-day score', firstDay.score, 4);
+      const twoModelDay = buildSpotForecast({ id: 'test' }, twoModelData, settings, '2026-11-06T07:00').days[0];
+      same('pipeline: each slot keeps its own spread', twoModelDay.slots.morning.spreadFt, 1);
+      same('pipeline: slots blend the models', twoModelDay.slots.morning.final.waveHeightFt, 4.5);
+
+      // Three models where one has no swell period, like ECMWF, and one disagrees a lot.
+      const threeModels = { ...data, models: {
+        a: { waveHeightFt: times.map(() => 3), swellPeriodS: times.map(() => 8), wavePeriodS: times.map(() => 6) },
+        b: { waveHeightFt: times.map(() => 3.5), swellPeriodS: times.map(() => 6), wavePeriodS: times.map(() => 6) },
+        c: { waveHeightFt: times.map(() => 6), swellPeriodS: times.map(() => null), wavePeriodS: times.map(() => 6) },
+      } };
+      const threeModelSlot = buildSpotForecast({ id: 'test' }, threeModels, settings, '2026-11-06T07:00').days[0].slots.morning;
+      same('pipeline: the middle value ignores an outlier', threeModelSlot.final.waveHeightFt, 3.5);
+      same('pipeline: period skips the model without one', threeModelSlot.final.swellPeriodS, 7);
+      same('pipeline: big disagreement lowers confidence', threeModelSlot.confidence, LOW);
+      same('settings: every model has a label', settings.models.every((model) => model.id && model.label), true);
+
       // --- Filters ---
       // Spots in north-to-south order, each with [Today's rating, Saturday's rating] and a drive time.
       const fakeSpot = (id, ratings, minutes) => ({
         id,
         driveMinutes: minutes === null ? {} : { doral: minutes },
-        days: ratings.map((rating, dayIndex) => ({ dayIndex, rating })),
+        days: ratings.map((rating, dayIndex) => fakeDay(dayIndex, rating)),
       });
+      function fakeDay(dayIndex, morning, midday = 1, evening = 1) {
+        const slot = (name, rating) => ({ name, rating, score: rating });
+        return { dayIndex, slots: { morning: slot('morning', morning), midday: slot('midday', midday), evening: slot('evening', evening) } };
+      }
       const fakeForecast = [
         fakeSpot('far-4', [4, 1], 200),
         fakeSpot('far-5', [5, 2], 180),
@@ -157,9 +188,31 @@
       same('filters: best first uses the best day in the range', order({ sort: 'best', rangeDays: 2 }), ['near-5', 'mid-3', 'far-5', 'near-1', 'near-4', 'far-4']);
       same('filters: worth surfing keeps 3 and up', order({ worthSurfingOnly: true }), ['far-4', 'far-5', 'mid-3', 'near-4', 'near-5']);
       same('filters: worth surfing counts any day in the range', order({ worthSurfingOnly: true, rangeDays: 2 }), ['far-4', 'far-5', 'mid-3', 'near-4', 'near-5', 'near-1']);
-      same('filters: a range of 1 only looks at today', bestDayInRange(fakeForecast[2], 1).dayIndex, 0);
-      same('filters: a longer range finds the later best day', bestDayInRange(fakeForecast[2], 2).dayIndex, 1);
-      same('filters: a range longer than the forecast still works', bestDayInRange(fakeForecast[2], 7).dayIndex, 1);
+      same('filters: a range of 1 only looks at today', bestDayInRange(fakeForecast[2], 1, 'morning').day.dayIndex, 0);
+      same('filters: a longer range finds the later best day', bestDayInRange(fakeForecast[2], 2, 'morning').day.dayIndex, 1);
+      same('filters: a range longer than the forecast still works', bestDayInRange(fakeForecast[2], 7, 'morning').day.dayIndex, 1);
+
+      // Better in the evening: skip it in the morning, great at 5.
+      const eveningDay = fakeDay(0, 1, 2, 5);
+      same('time: morning uses the morning rating', slotForTime(eveningDay, 'morning').rating, 1);
+      same('time: evening uses the evening rating', slotForTime(eveningDay, 'evening').rating, 5);
+      same('time: all day finds the best window', slotForTime(eveningDay, ALL_DAY).name, 'evening');
+      same('time: all day ties go to the earliest window', slotForTime(fakeDay(0, 3, 3, 3), ALL_DAY).name, 'morning');
+      same('time: all day compares unrounded scores', slotForTime({ slots: { morning: { name: 'morning', rating: 4, score: 3.6 }, midday: { name: 'midday', rating: 4, score: 4.4 } } }, ALL_DAY).name, 'midday');
+      same('time: all day skips windows with no score', slotForTime({ slots: { morning: { name: 'morning', rating: null, score: null }, midday: { name: 'midday', rating: 2, score: 2 } } }, ALL_DAY).name, 'midday');
+      const eveningSpot = { id: 'evening-spot', driveMinutes: { doral: 10 }, days: [eveningDay] };
+      const pastDay = fakeDay(0, 5, 2, 3);
+      pastDay.slots.morning.past = true;
+      same('time: all day skips a window that has passed', slotForTime(pastDay, ALL_DAY).name, 'evening');
+      const allPastDay = fakeDay(0, 5, 2, 3);
+      Object.values(allPastDay.slots).forEach((slot) => { slot.past = true; });
+      same('time: all day still answers once every window has passed', slotForTime(allPastDay, ALL_DAY).name, 'morning');
+      same('time: look-ahead skips a morning that has passed', bestDay([pastDay, fakeDay(1, 3)], 'morning').day.dayIndex, 1);
+      same('time: a passed morning still shows when it is all that is left', bestDay([pastDay], 'morning').slot.past, true);
+      same('time: morning availability hides an evening-only spot', applyView([eveningSpot], { ...DEFAULT_VIEW, worthSurfingOnly: true }, options).length, 0);
+      same('time: evening availability keeps it', applyView([eveningSpot], { ...DEFAULT_VIEW, worthSurfingOnly: true, time: 'evening' }, options).length, 1);
+      same('time: all day keeps it', applyView([eveningSpot], { ...DEFAULT_VIEW, worthSurfingOnly: true, time: ALL_DAY }, options).length, 1);
+      same('time: best first follows the chosen time', applyView([fakeSpot('morning-4', [4], 50), eveningSpot], { ...DEFAULT_VIEW, sort: 'best', time: 'evening' }, options)[0].id, 'evening-spot');
       same('filters: max drive keeps exactly the limit', order({ maxDriveMinutes: 90 }), ['mid-3', 'near-4', 'near-5', 'near-1']);
       same('filters: filters combine with sorting', order({ sort: 'best', worthSurfingOnly: true, maxDriveMinutes: 60 }), ['near-5', 'near-4']);
       same('filters: sorting does not reorder the forecast itself', (order({ sort: 'closest' }), fakeForecast[0].id), 'far-4');
@@ -174,14 +227,14 @@
       same('filters: short drive on the hour', formatDriveShort(180), '3h');
       same('filters: unknown short drive gives nothing', formatDriveShort(null), null);
 
-      same('filters: best day is the highest rating', bestDay(fakeForecast[2].days).dayIndex, 1);
-      same('filters: a tied best day goes to the soonest', bestDay([{ dayIndex: 0, rating: 2 }, { dayIndex: 1, rating: 4 }, { dayIndex: 2, rating: 4 }]).dayIndex, 1);
-      same('filters: best day skips days with no rating', bestDay([{ dayIndex: 0, rating: null }, { dayIndex: 1, rating: 1 }]).dayIndex, 1);
-      same('filters: no ratings gives no best day', bestDay([{ dayIndex: 0, rating: null }]), null);
+      same('filters: best day is the highest rating', bestDay(fakeForecast[2].days, 'morning').day.dayIndex, 1);
+      same('filters: a tied best day goes to the soonest', bestDay([fakeDay(0, 2), fakeDay(1, 4), fakeDay(2, 4)], 'morning').day.dayIndex, 1);
+      same('filters: best day skips days with no rating', bestDay([fakeDay(0, null), fakeDay(1, 1)], 'morning').day.dayIndex, 1);
+      same('filters: no ratings gives no best day', bestDay([fakeDay(0, null)], 'morning'), null);
 
       same('filters: nothing saved gives the defaults', restoreView(null), DEFAULT_VIEW);
-      same('filters: restores saved choices', restoreView({ rangeDays: 5, sort: 'best', worthSurfingOnly: true, maxDriveMinutes: 120 }), { rangeDays: 5, sort: 'best', worthSurfingOnly: true, maxDriveMinutes: 120 });
-      same('filters: ignores unrecognized saved choices', restoreView({ rangeDays: 4, sort: 'toString', worthSurfingOnly: 'yes', maxDriveMinutes: 45 }), DEFAULT_VIEW);
+      same('filters: restores saved choices', restoreView({ rangeDays: 5, time: 'evening', sort: 'best', worthSurfingOnly: true, maxDriveMinutes: 120 }), { rangeDays: 5, time: 'evening', sort: 'best', worthSurfingOnly: true, maxDriveMinutes: 120 });
+      same('filters: ignores unrecognized saved choices', restoreView({ rangeDays: 4, time: 'night', sort: 'toString', worthSurfingOnly: 'yes', maxDriveMinutes: 45 }), DEFAULT_VIEW);
       same('filters: choices saved by the older version are ignored safely', restoreView({ sort: 'best', dayIndex: 3 }), { ...DEFAULT_VIEW, sort: 'best' });
 
       // --- Spots ---

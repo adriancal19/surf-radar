@@ -135,6 +135,17 @@ main,
   font-weight: 600;
 }
 
+.more-controls summary {
+  min-height: 32px;
+  color: var(--muted);
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.more-controls[open] summary {
+  margin-bottom: 8px;
+}
+
 /* Rating badge */
 
 .badge {
@@ -269,10 +280,29 @@ h2 {
   display: none;
 }
 
-.day-midday {
+.day-more {
   padding: 0 12px 10px 66px;
   color: var(--muted);
   font-size: 0.85rem;
+}
+
+.day-more ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.day-more li + li {
+  border-top: 0;
+  margin-top: 4px;
+}
+
+.day-more p {
+  margin-top: 6px;
+}
+
+section .controls {
+  margin-bottom: 8px;
 }
 
 /* Footer */
