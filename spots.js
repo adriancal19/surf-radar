@@ -1,4 +1,4 @@
-// Spots, north to south. IDs are permanent: session logs will refer to them later.
+// Spots, north to south. IDs appear in links to each spot and in the record of sent alerts.
 //
 // lat/lon is the point sent to the forecast, not the beach itself. The wave model has
 // no data close to most of this coast, so these sit offshore and the model uses its
@@ -77,7 +77,7 @@ export const spots = [
     cams: [{ label: 'Fort Pierce inlet, surf and jetty (Visit St. Lucie)', url: 'https://visitstlucie.com/live-web-cams/' }],
   },
   {
-    id: 'stuart-jensen-beach',
+    id: 'jensen-beach',
     beach: { lat: 27.2, lon: -80.16 },
     name: 'Jensen Beach',
     lat: 27.208,
@@ -87,7 +87,7 @@ export const spots = [
     cams: [{ label: 'Jensen Beach and Bathtub Beach (Hutchinson Island)', url: 'https://floridashutchinsonisland.com/Hutchinson-island-Beaches-Webcam.html' }],
   },
   {
-    id: 'jupiter-juno',
+    id: 'jupiter-inlet',
     beach: { lat: 26.94, lon: -80.07 },
     name: 'Jupiter Inlet',
     lat: 26.958,
