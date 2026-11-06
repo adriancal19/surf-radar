@@ -79,7 +79,7 @@ export const spots = [
   {
     id: 'stuart-jensen-beach',
     beach: { lat: 27.2, lon: -80.16 },
-    name: 'Stuart / Jensen Beach',
+    name: 'Jensen Beach',
     lat: 27.208,
     lon: -80.125,
     buoyId: '41114',
@@ -89,7 +89,7 @@ export const spots = [
   {
     id: 'jupiter-juno',
     beach: { lat: 26.94, lon: -80.07 },
-    name: 'Jupiter Inlet / Juno',
+    name: 'Jupiter Inlet',
     lat: 26.958,
     lon: -79.958,
     buoyId: '41114',
