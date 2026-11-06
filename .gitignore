@@ -1,0 +1,9 @@
+# Secrets (API keys go in GitHub secrets, never in the code)
+.env
+.env.*
+
+# Editor and system files
+.vscode/
+Thumbs.db
+Desktop.ini
+.DS_Store

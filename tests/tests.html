@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Surf Radar tests</title>
+    <style>
+      body { font-family: system-ui, sans-serif; margin: 24px; }
+      .pass { color: #17663a; }
+      .fail { color: #b3261e; font-weight: 700; }
+      li { margin-block: 2px; }
+    </style>
+  </head>
+  <body>
+    <h1 id="summary">Running…</h1>
+    <ul id="results"></ul>
+
+    <script type="module">
+      import { settings } from '../settings.js';
+      import { spots } from '../spots.js';
+      import { blendValues, blendReadings } from '../src/blend.js';
+      import { confidenceLabel, HIGH, MEDIUM, LOW } from '../src/confidence.js';
+      import { averageDirection, buildSpotForecast, localHourKey } from '../src/pipeline.js';
+      import { interpolate, scoreConditions, scoreDay, toRating } from '../src/rating.js';
+      import { parseMarineLocation, parseWindLocation } from '../src/sources/open-meteo.js';
+
+      const results = [];
+      const close = (a, b) => a !== null && b !== null && Math.abs(a - b) < 1e-9;
+
+      function check(name, passed, detail = '') {
+        results.push({ name, passed, detail });
+      }
+      const same = (name, actual, expected) =>
+        check(
+          name,
+          typeof expected === 'number' ? close(actual, expected) : JSON.stringify(actual) === JSON.stringify(expected),
+          `got ${JSON.stringify(actual)}, expected ${JSON.stringify(expected)}`,
+        );
+
+      const profile = settings.profiles.adrian;
+      const score = (waveHeightFt, swellPeriodS) => scoreConditions({ waveHeightFt, swellPeriodS }, profile);
+      const rules = settings.confidence;
+
+      // --- Blend ---
+      same('blend: one model passes through with unknown spread', blendValues([3.2]), { value: 3.2, spread: null, count: 1 });
+      same('blend: no values gives nothing', blendValues([null, undefined]), { value: null, spread: null, count: 0 });
+      same('blend: median of an odd count', blendValues([1, 5, 2]).value, 2);
+      same('blend: median of an even count', blendValues([1, 2, 3, 6]).value, 2.5);
+      same('blend: spread is highest minus lowest', blendValues([1, 2, 3, 6]).spread, 5);
+      same('blend: skips missing values', blendValues([2, null, 4]), { value: 3, spread: 2, count: 2 });
+      same('blend: readings with one model have unknown spread', blendReadings([{ waveHeightFt: 3, swellPeriodS: 8 }]), { waveHeightFt: 3, swellPeriodS: 8, heightSpreadFt: null });
+      same('blend: readings with two models report height spread', blendReadings([{ waveHeightFt: 3 }, { waveHeightFt: 4 }]), { waveHeightFt: 3.5, heightSpreadFt: 1 });
+
+      // --- Rating ---
+      same('rating: interpolate is flat before the first point', interpolate(profile.periodCurve, 3), -1);
+      same('rating: interpolate is flat after the last point', interpolate(profile.periodCurve, 12), 1);
+      same('rating: under 2.5 ft scores 1', score(2.4, 7), 1);
+      same('rating: a long period can not lift a small day', score(1.5, 12), 1);
+      same('rating: 2.5 ft at a neutral period scores 2.5', score(2.5, 7), 2.5);
+      same('rating: 4 ft at a neutral period scores 4.5', score(4, 7), 4.5);
+      same('rating: 5 ft at a neutral period scores 5', score(5, 7), 5);
+      same('rating: halfway between size points', score(3.25, 7), 3.5);
+      same('rating: 6 s takes off a point', score(4, 6), 3.5);
+      same('rating: under 6 s still takes off only a point', score(4, 4), 3.5);
+      same('rating: 8 s adds a point', score(3.25, 8), 4.5);
+      same('rating: 7.5 s adds half a point', score(3.25, 7.5), 4);
+      same('rating: big days stay capped at 5', score(10, 14), 5);
+      same('rating: missing period leaves the score alone', score(4, null), 4.5);
+      same('rating: missing height gives no score', score(null, 8), null);
+      same('rating: morning counts 75%, midday 25%', scoreDay({ morning: { waveHeightFt: 4, swellPeriodS: 7 }, midday: { waveHeightFt: 2.5, swellPeriodS: 7 } }, profile), 4);
+      same('rating: a missing window gives the other full weight', scoreDay({ morning: { waveHeightFt: null }, midday: { waveHeightFt: 4, swellPeriodS: 7 } }, profile), 4.5);
+      same('rating: no data gives no score', scoreDay({ morning: {}, midday: {} }, profile), null);
+      same('rating: rounds for display', toRating(3.5), 4);
+      same('rating: no score gives no rating', toRating(null), null);
+
+      // --- Confidence ---
+      const label = (dayIndex, spreadFt = null) => confidenceLabel({ dayIndex, spreadFt }, rules);
+      same('confidence: today is high', label(0), HIGH);
+      same('confidence: Day 3 is high', label(3), HIGH);
+      same('confidence: Day 4 is medium', label(4), MEDIUM);
+      same('confidence: Day 5 is medium', label(5), MEDIUM);
+      same('confidence: Day 6 is low', label(6), LOW);
+      same('confidence: Day 7 is low', label(7), LOW);
+      same('confidence: models agreeing keeps Day 2 high', label(2, 0.5), HIGH);
+      same('confidence: models disagreeing drops Day 2 to medium', label(2, 1.5), MEDIUM);
+      same('confidence: big disagreement drops Day 2 to low', label(2, 2.5), LOW);
+      same('confidence: big disagreement drops Day 4 to low', label(4, 2.5), LOW);
+
+      // --- Open-Meteo format ---
+      const singleModel = { hourly: { time: ['t0'], wave_height: [3], swell_wave_period: [8], wave_period: [6] } };
+      same('source: reads unsuffixed fields with one model', parseMarineLocation(singleModel, ['a']).models.a, { waveHeightFt: [3], swellPeriodS: [8], wavePeriodS: [6] });
+      const twoModels = { hourly: { time: ['t0'], wave_height_a: [3], swell_wave_period_a: [8], wave_period_a: [6], wave_height_b: [4], wave_period_b: [7] } };
+      same('source: reads suffixed fields with two models', parseMarineLocation(twoModels, ['a', 'b']).models.b.waveHeightFt, [4]);
+      same('source: a field a model lacks becomes empty values', parseMarineLocation(twoModels, ['a', 'b']).models.b.swellPeriodS, [null]);
+      same(
+        'source: wind lines up with marine times',
+        parseWindLocation({ hourly: { time: ['t1', 't0'], wind_speed_10m: [20, 10], wind_direction_10m: [200, 100] } }, ['t0', 't1', 't2']),
+        { speedMph: [10, 20, null], directionDeg: [100, 200, null] },
+      );
+
+      // --- Pipeline ---
+      same('pipeline: wind direction averages across north', Math.round(averageDirection([350, 10])) % 360, 0);
+      same('pipeline: local hour uses the beach time zone', localHourKey(new Date('2026-11-06T17:30:00Z'), 'America/New_York'), '2026-11-06T12:00');
+
+      const times = [];
+      for (const date of ['2026-11-06', '2026-11-07']) {
+        for (let hour = 0; hour < 24; hour++) times.push(`${date}T${String(hour).padStart(2, '0')}:00`);
+      }
+      // 4 ft from 6–10 am, 2.5 ft from 10 am–2 pm, and 99 ft outside the windows, which must be ignored.
+      const heights = times.map((time) => {
+        const hour = Number(time.slice(11, 13));
+        return hour >= 6 && hour < 10 ? 4 : hour >= 10 && hour < 14 ? 2.5 : 99;
+      });
+      const data = {
+        times,
+        models: { only: { waveHeightFt: heights, swellPeriodS: times.map(() => 7), wavePeriodS: times.map(() => 5) } },
+        wind: null,
+      };
+      const built = buildSpotForecast({ id: 'test', name: 'Test' }, data, settings, '2026-11-06T07:00');
+      const firstDay = built.days[0];
+      same('pipeline: groups hours into days', built.days.length, 2);
+      same('pipeline: morning ignores hours outside the window', firstDay.final.morning.waveHeightFt, 4);
+      same('pipeline: midday ignores hours outside the window', firstDay.final.midday.waveHeightFt, 2.5);
+      same('pipeline: keeps the unrounded score', firstDay.score, 4);
+      same('pipeline: stores each model under its name', firstDay.raw.only.morning.waveHeightFt, 4);
+      same('pipeline: keeps overall wave period', firstDay.final.morning.wavePeriodS, 5);
+      same('pipeline: spread is unknown with one model', firstDay.spreadFt, null);
+      same('pipeline: flags start empty', firstDay.flags, []);
+      same('pipeline: labels confidence by lead time', firstDay.confidence, HIGH);
+      same('pipeline: reports the current hour', built.now.waveHeightFt, 4);
+      same('pipeline: missing wind stays empty', firstDay.wind.morning.speedMph, null);
+
+      const twoModelData = { ...data, models: { ...data.models, other: { waveHeightFt: heights.map((h) => h + 1), swellPeriodS: times.map(() => 7), wavePeriodS: times.map(() => 5) } } };
+      same('pipeline: two models produce a spread', buildSpotForecast({ id: 'test' }, twoModelData, settings, '2026-11-06T07:00').days[0].spreadFt, 1);
+
+      // --- Spots ---
+      same('spots: there are 17', spots.length, 17);
+      same('spots: IDs are unique', new Set(spots.map((spot) => spot.id)).size, spots.length);
+      check('spots: listed north to south', spots.every((spot, index) => index === 0 || spot.lat < spots[index - 1].lat));
+
+      // --- Show results ---
+      const failed = results.filter((result) => !result.passed);
+      const summary = failed.length ? `${failed.length} of ${results.length} tests failed` : `All ${results.length} tests passed`;
+      document.querySelector('#summary').textContent = summary;
+      document.querySelector('#summary').className = failed.length ? 'fail' : 'pass';
+      document.title = summary;
+      document.querySelector('#results').innerHTML = results
+        .map((result) => {
+          const item = document.createElement('li');
+          item.className = result.passed ? 'pass' : 'fail';
+          item.textContent = result.passed ? `✓ ${result.name}` : `✗ ${result.name}: ${result.detail}`;
+          return item.outerHTML;
+        })
+        .join('');
+    </script>
+  </body>
+</html>

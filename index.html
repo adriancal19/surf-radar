@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="Surf ratings and 7-day forecasts for Florida's east coast, South Beach to Cocoa Beach." />
+    <title>Surf Radar</title>
+    <link rel="stylesheet" href="styles.css" />
+    <script type="module" src="src/app.js"></script>
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="site-title" href="#">Surf Radar</a>
+      <span class="status" id="status" aria-live="polite"></span>
+    </header>
+
+    <main id="main"></main>
+
+    <footer class="site-footer">
+      <p>
+        Wave heights are modeled offshore, not measured at the beach, so treat them as a guide.
+        Model: <span id="model-name"></span>.
+      </p>
+      <p>
+        Weather and marine data by <a href="https://open-meteo.com/">Open-Meteo.com</a>, licensed under
+        <a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>.
+      </p>
+    </footer>
+  </body>
+</html>
