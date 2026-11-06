@@ -43,8 +43,8 @@ export const settings = {
 
       // [swell period in seconds, points added to the score].
       periodCurve: [
-        [6, -1],
-        [8, 1],
+        [6, -0.5],
+        [8, 0.5],
       ],
 
       // Hours are local time. endHour is not included (6–10 means 6:00 through 9:59).

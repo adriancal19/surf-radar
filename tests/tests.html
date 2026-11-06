@@ -52,18 +52,21 @@
       same('blend: readings with two models report height spread', blendReadings([{ waveHeightFt: 3 }, { waveHeightFt: 4 }]), { waveHeightFt: 3.5, heightSpreadFt: 1 });
 
       // --- Rating ---
-      same('rating: interpolate is flat before the first point', interpolate(profile.periodCurve, 3), -1);
-      same('rating: interpolate is flat after the last point', interpolate(profile.periodCurve, 12), 1);
+      same('rating: interpolate is flat before the first point', interpolate(profile.periodCurve, 3), -0.5);
+      same('rating: interpolate is flat after the last point', interpolate(profile.periodCurve, 12), 0.5);
       same('rating: under 2.5 ft scores 1', score(2.4, 7), 1);
       same('rating: a long period can not lift a small day', score(1.5, 12), 1);
       same('rating: 2.5 ft at a neutral period scores 2.5', score(2.5, 7), 2.5);
       same('rating: 4 ft at a neutral period scores 4.5', score(4, 7), 4.5);
       same('rating: 5 ft at a neutral period scores 5', score(5, 7), 5);
       same('rating: halfway between size points', score(3.25, 7), 3.5);
-      same('rating: 6 s takes off a point', score(4, 6), 3.5);
-      same('rating: under 6 s still takes off only a point', score(4, 4), 3.5);
-      same('rating: 8 s adds a point', score(3.25, 8), 4.5);
-      same('rating: 7.5 s adds half a point', score(3.25, 7.5), 4);
+      same('rating: 6 s takes off half a point', score(4, 6), 4);
+      same('rating: under 6 s still takes off only half a point', score(4, 4), 4);
+      same('rating: 8 s adds half a point', score(3.25, 8), 4);
+      same('rating: 7.5 s adds a quarter point', score(3.25, 7.5), 3.75);
+      same('rating: a 2.7 ft day at 8 s is fair, not good', toRating(score(2.7, 8)), 3);
+      same('rating: a 3.4 ft day at 8 s is good, not great', toRating(score(3.4, 8)), 4);
+      same('rating: a 3.9 ft day at 8 s is great', toRating(score(3.9, 8)), 5);
       same('rating: big days stay capped at 5', score(10, 14), 5);
       same('rating: missing period leaves the score alone', score(4, null), 4.5);
       same('rating: missing height gives no score', score(null, 8), null);
