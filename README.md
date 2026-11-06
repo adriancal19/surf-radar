@@ -1,6 +1,6 @@
 # Surf Radar
 
-A free surf forecast for Florida's east coast, from Cocoa Beach to South Beach. Each spot gets a 1–5 rating and a 7-day forecast with confidence labels.
+A free surf forecast for Florida's east coast, from Cocoa Beach to South Beach. Each spot gets a 1–5 rating and a 7-day forecast with confidence labels. You can pick a day, sort by rating or drive time from Doral, and filter by rating and distance.
 
 ## Run it
 
@@ -27,3 +27,5 @@ The wave model has no data close to most of this coast, so forecast points are u
 ## Data
 
 Weather and marine data by [Open-Meteo.com](https://open-meteo.com/), licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). The free data source is for non-commercial use only.
+
+Drive times are saved estimates without traffic, from [OSRM](https://project-osrm.org/) using map data © [OpenStreetMap](https://www.openstreetmap.org/copyright) contributors.

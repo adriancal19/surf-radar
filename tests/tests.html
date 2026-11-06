@@ -20,6 +20,7 @@
       import { blendValues, blendReadings } from '../src/blend.js';
       import { confidenceLabel, HIGH, MEDIUM, LOW } from '../src/confidence.js';
       import { averageDirection, buildSpotForecast, localHourKey } from '../src/pipeline.js';
+      import { applyView, bestDay, DEFAULT_VIEW, formatDrive, restoreView } from '../src/filters.js';
       import { interpolate, scoreConditions, scoreDay, toRating } from '../src/rating.js';
       import { parseMarineLocation, parseWindLocation } from '../src/sources/open-meteo.js';
 
@@ -132,7 +133,52 @@
       const twoModelData = { ...data, models: { ...data.models, other: { waveHeightFt: heights.map((h) => h + 1), swellPeriodS: times.map(() => 7), wavePeriodS: times.map(() => 5) } } };
       same('pipeline: two models produce a spread', buildSpotForecast({ id: 'test' }, twoModelData, settings, '2026-11-06T07:00').days[0].spreadFt, 1);
 
+      // --- Filters ---
+      // Spots in north-to-south order, each with [Today's rating, Saturday's rating] and a drive time.
+      const fakeSpot = (id, ratings, minutes) => ({
+        id,
+        driveMinutes: minutes === null ? {} : { doral: minutes },
+        days: ratings.map((rating, dayIndex) => ({ dayIndex, rating })),
+      });
+      const fakeForecast = [
+        fakeSpot('far-4', [4, 1], 200),
+        fakeSpot('far-5', [5, 2], 180),
+        fakeSpot('mid-3', [3, 5], 90),
+        fakeSpot('near-4', [4, 3], 50),
+        fakeSpot('near-5', [5, 1], 30),
+        fakeSpot('near-1', [1, 4], 40),
+      ];
+      const options = { homeId: 'doral', worthSurfingRating: 3 };
+      const order = (changes) => applyView(fakeForecast, { ...DEFAULT_VIEW, ...changes }, options).map((spot) => spot.id);
+
+      same('filters: north to south keeps the original order', order({}), ['far-4', 'far-5', 'mid-3', 'near-4', 'near-5', 'near-1']);
+      same('filters: best to worst puts the closest first within each rating', order({ sort: 'best' }), ['near-5', 'far-5', 'near-4', 'far-4', 'mid-3', 'near-1']);
+      same('filters: closest to farthest ignores rating', order({ sort: 'closest' }), ['near-5', 'near-1', 'near-4', 'mid-3', 'far-5', 'far-4']);
+      same('filters: best to worst follows the selected day', order({ sort: 'best', dayIndex: 1 }), ['mid-3', 'near-1', 'near-4', 'far-5', 'near-5', 'far-4']);
+      same('filters: worth surfing keeps 3 and up', order({ worthSurfingOnly: true }), ['far-4', 'far-5', 'mid-3', 'near-4', 'near-5']);
+      same('filters: worth surfing follows the selected day', order({ worthSurfingOnly: true, dayIndex: 1 }), ['mid-3', 'near-4', 'near-1']);
+      same('filters: max drive keeps exactly the limit', order({ maxDriveMinutes: 90 }), ['mid-3', 'near-4', 'near-5', 'near-1']);
+      same('filters: filters combine with sorting', order({ sort: 'best', worthSurfingOnly: true, maxDriveMinutes: 60 }), ['near-5', 'near-4']);
+      same('filters: sorting does not reorder the forecast itself', (order({ sort: 'closest' }), fakeForecast[0].id), 'far-4');
+      same('filters: a spot with no drive time sorts last', applyView([fakeSpot('none', [5], null), fakeSpot('some', [5], 100)], { ...DEFAULT_VIEW, sort: 'closest' }, options).map((spot) => spot.id), ['some', 'none']);
+
+      same('filters: under an hour shows minutes', formatDrive(31), 'about 30 min');
+      same('filters: drive times round to 5 minutes', formatDrive(102), 'about 1 hr 40 min');
+      same('filters: whole hours drop the minutes', formatDrive(239), 'about 4 hr');
+      same('filters: unknown drive time gives nothing', formatDrive(null), null);
+
+      same('filters: best day is the highest rating', bestDay(fakeForecast[2].days).dayIndex, 1);
+      same('filters: a tied best day goes to the soonest', bestDay([{ dayIndex: 0, rating: 2 }, { dayIndex: 1, rating: 4 }, { dayIndex: 2, rating: 4 }]).dayIndex, 1);
+      same('filters: best day skips days with no rating', bestDay([{ dayIndex: 0, rating: null }, { dayIndex: 1, rating: 1 }]).dayIndex, 1);
+      same('filters: no ratings gives no best day', bestDay([{ dayIndex: 0, rating: null }]), null);
+
+      same('filters: nothing saved gives the defaults', restoreView(null), DEFAULT_VIEW);
+      same('filters: restores saved choices', restoreView({ sort: 'best', worthSurfingOnly: true, maxDriveMinutes: 120 }), { dayIndex: 0, sort: 'best', worthSurfingOnly: true, maxDriveMinutes: 120 });
+      same('filters: ignores unrecognized saved choices', restoreView({ sort: 'toString', worthSurfingOnly: 'yes', maxDriveMinutes: 45 }), DEFAULT_VIEW);
+      same('filters: the day always starts on today', restoreView({ dayIndex: 3 }).dayIndex, 0);
+
       // --- Spots ---
+      check('spots: every spot has a drive time from each starting point', spots.every((spot) => Object.keys(settings.homes).every((home) => Number.isFinite(spot.driveMinutes[home]))));
       same('spots: there are 17', spots.length, 17);
       same('spots: IDs are unique', new Set(spots.map((spot) => spot.id)).size, spots.length);
       check('spots: listed north to south', spots.every((spot, index) => index === 0 || spot.lat < spots[index - 1].lat));

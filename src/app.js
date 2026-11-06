@@ -3,6 +3,15 @@
 
 import { settings } from '../settings.js';
 import { spots } from '../spots.js';
+import {
+  applyView,
+  bestDay,
+  driveMinutes,
+  DRIVE_LIMITS,
+  formatDrive,
+  restoreView,
+  SORTS,
+} from './filters.js';
 import { loadForecast } from './pipeline.js';
 import { ratingLabel } from './rating.js';
 
@@ -10,9 +19,29 @@ const main = document.querySelector('#main');
 const status = document.querySelector('#status');
 
 const profile = settings.profiles[settings.activeProfile];
+const home = settings.homes[profile.home];
 const MISSING = '–';
+const STORAGE_KEY = 'surf-radar-view';
 
 let forecast = null;
+let view = restoreView(readSavedView());
+
+function readSavedView() {
+  try {
+    return JSON.parse(localStorage.getItem(STORAGE_KEY));
+  } catch {
+    return null;
+  }
+}
+
+function saveView() {
+  const { sort, worthSurfingOnly, maxDriveMinutes } = view;
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ sort, worthSurfingOnly, maxDriveMinutes }));
+  } catch {
+    // Private browsing can block storage. The filters still work, they just won't be remembered.
+  }
+}
 
 const escapeHtml = (text) =>
   String(text).replace(/[&<>"']/g, (char) => `&#${char.charCodeAt(0)};`);
@@ -49,37 +78,110 @@ function ratingBadge(rating) {
   return `<span class="badge badge-${rating ?? 'none'}" role="img" aria-label="Rating ${value} of 5, ${ratingLabel(rating)}">${value}</span>`;
 }
 
-function renderList() {
-  const rows = forecast
-    .map((spot) => {
-      const today = spot.days[0];
-      const morning = today.final.morning;
-      return `
-        <li>
-          <a class="spot-row" href="#${escapeHtml(spot.id)}">
-            ${ratingBadge(today.rating)}
-            <span class="spot-name">
-              <strong>${escapeHtml(spot.name)}</strong>
-              <small>${ratingLabel(today.rating)}</small>
-            </span>
-            <span class="spot-numbers">
-              <strong>${formatFt(morning.waveHeightFt)}</strong>
-              <small>${formatPeriod(morning.swellPeriodS)} · ${formatWind(today.wind.morning)}</small>
-            </span>
-          </a>
-        </li>`;
-    })
-    .join('');
-
-  main.innerHTML = `
-    <p class="intro">Today's rating, with ${escapeHtml(windowHours(profile.windows.morning))} morning conditions. North to south.</p>
-    <ul class="spot-list">${rows}</ul>`;
-  document.title = 'Surf Radar';
-}
-
 function windowHours({ startHour, endHour }) {
   const hour = (value) => `${value % 12 || 12} ${value < 12 ? 'am' : 'pm'}`;
   return `${hour(startHour)}–${hour(endHour)}`;
+}
+
+function bestDayText(spot) {
+  const best = bestDay(spot.days);
+  if (!best) return '';
+  if (best.rating === 1) return 'No day above 1';
+  return `Best: ${dayName(best)}, rated ${best.rating}`;
+}
+
+function driveText(spot) {
+  const drive = formatDrive(driveMinutes(spot, profile.home));
+  return drive ? `${drive[0].toUpperCase()}${drive.slice(1)} from ${escapeHtml(home.label)}` : '';
+}
+
+function renderControls() {
+  const dayButtons = forecast[0].days
+    .map(
+      (day) =>
+        `<button type="button" class="day-button" data-day="${day.dayIndex}">${dayName(day)}</button>`,
+    )
+    .join('');
+  const sortOptions = Object.entries(SORTS)
+    .map(
+      ([value, label]) =>
+        `<option value="${value}"${value === view.sort ? ' selected' : ''}>${label}</option>`,
+    )
+    .join('');
+  const driveOptions = DRIVE_LIMITS.map(
+    ({ minutes, label }) =>
+      `<option value="${minutes ?? ''}"${minutes === view.maxDriveMinutes ? ' selected' : ''}>${label}</option>`,
+  ).join('');
+
+  return `
+    <div class="controls">
+      <div class="day-buttons" role="group" aria-label="Forecast day">${dayButtons}</div>
+      <div class="control-row">
+        <label>Sort
+          <select id="sort">${sortOptions}</select>
+        </label>
+        <label>Drive from ${escapeHtml(home.label)}
+          <select id="max-drive">${driveOptions}</select>
+        </label>
+      </div>
+      <label class="checkbox">
+        <input type="checkbox" id="worth-surfing"${view.worthSurfingOnly ? ' checked' : ''} />
+        Only spots rated ${profile.worthSurfingRating} or higher
+      </label>
+    </div>
+    <p class="intro" id="list-summary" aria-live="polite"></p>
+    <div id="spot-results"></div>`;
+}
+
+function renderSpotRow(spot) {
+  const day = spot.days[view.dayIndex];
+  const morning = day.final.morning;
+  return `
+    <li>
+      <a class="spot-row" href="#${escapeHtml(spot.id)}">
+        ${ratingBadge(day.rating)}
+        <span class="spot-name">
+          <strong>${escapeHtml(spot.name)}</strong>
+          <small>${ratingLabel(day.rating)} · ${bestDayText(spot)}</small>
+          <small>${driveText(spot)}</small>
+        </span>
+        <span class="spot-numbers">
+          <strong>${formatFt(morning.waveHeightFt)}</strong>
+          <small>${formatPeriod(morning.swellPeriodS)}</small>
+          <small>${formatWind(day.wind.morning)}</small>
+        </span>
+      </a>
+    </li>`;
+}
+
+function updateList() {
+  const visible = applyView(forecast, view, {
+    homeId: profile.home,
+    worthSurfingRating: profile.worthSurfingRating,
+  });
+
+  const selectedDay = forecast[0].days[view.dayIndex];
+  document.querySelectorAll('.day-button').forEach((button) => {
+    button.setAttribute('aria-pressed', String(Number(button.dataset.day) === view.dayIndex));
+  });
+
+  const dayText =
+    view.dayIndex === 0
+      ? "Today's ratings"
+      : `Ratings for ${formatDate(selectedDay.date, { weekday: 'long', month: 'short', day: 'numeric' })}`;
+  const countText = visible.length === forecast.length ? '' : ` Showing ${visible.length} of ${forecast.length} spots.`;
+  document.querySelector('#list-summary').textContent =
+    `${dayText}, with ${windowHours(profile.windows.morning)} morning conditions.${countText}`;
+
+  document.querySelector('#spot-results').innerHTML = visible.length
+    ? `<ul class="spot-list">${visible.map(renderSpotRow).join('')}</ul>`
+    : '<p class="message">No spots match these filters.</p>';
+}
+
+function renderList() {
+  main.innerHTML = renderControls();
+  updateList();
+  document.title = 'Surf Radar';
 }
 
 function renderNow(spot) {
@@ -122,6 +224,7 @@ function renderSpot(spot) {
   main.innerHTML = `
     <a class="back" href="#">← All spots</a>
     <h1 class="spot-title">${escapeHtml(spot.name)}</h1>
+    <p class="spot-summary">${driveText(spot)}<br />${bestDayText(spot)}</p>
     ${renderNow(spot)}
     <section>
       <h2>Today and the next 7 days</h2>
@@ -139,6 +242,24 @@ function render() {
   else renderList();
   window.scrollTo(0, 0);
 }
+
+// The controls get redrawn with the list view, so listen on the container that stays put.
+main.addEventListener('click', (event) => {
+  const button = event.target.closest('.day-button');
+  if (!button) return;
+  view.dayIndex = Number(button.dataset.day);
+  updateList();
+});
+
+main.addEventListener('change', (event) => {
+  if (event.target.id === 'sort') view.sort = event.target.value;
+  else if (event.target.id === 'max-drive') {
+    view.maxDriveMinutes = event.target.value === '' ? null : Number(event.target.value);
+  } else if (event.target.id === 'worth-surfing') view.worthSurfingOnly = event.target.checked;
+  else return;
+  saveView();
+  updateList();
+});
 
 async function load() {
   main.innerHTML = '<p class="message">Loading the forecast…</p>';

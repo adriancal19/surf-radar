@@ -9,14 +9,24 @@ export const settings = {
   // Add more models here in Phase 1.5. The rest of the code already handles a list.
   models: [{ id: 'meteofrance_wave', label: 'Météo-France' }],
 
+  // Starting points for drive times, kept general on purpose because this code is public.
+  // Each one needs matching times under driveMinutes in spots.js.
+  homes: {
+    doral: { label: 'Doral', lat: 25.82, lon: -80.35 },
+  },
+
   activeProfile: 'adrian',
 
   profiles: {
     adrian: {
       name: 'Adrian',
+      home: 'doral',
 
       // Anything smaller than this rates 1, whatever the period.
       minWaveFt: 2.5,
+
+      // The lowest rating the "only worth surfing" filter keeps.
+      worthSurfingRating: 3,
 
       // [wave height in ft, score]. Straight lines between points, flat past the last one.
       sizeCurve: [
