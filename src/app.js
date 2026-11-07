@@ -9,17 +9,21 @@ import {
   ALL_DAY,
   applyView,
   bestDay,
-  bestDayInRange,
+  bestDayInView,
   bestTimeToGo,
+  daysInView,
   driveMinutes,
   DRIVE_LIMITS,
   formatDrive,
   formatDriveShort,
+  keepKnownDates,
+  PICKABLE_DAYS,
   RANGES,
   restoreView,
   slotForTime,
   SORTS,
   TIMES,
+  toggleDate,
 } from './filters.js';
 import { icon } from './icons.js';
 import { landPath, layoutPins, MAP_HEIGHT, MAP_WIDTH, toX, toY } from './map.js';
@@ -84,6 +88,25 @@ function dayName(day) {
   return formatDate(day.date, { weekday: 'short' });
 }
 
+// The days you can pick one by one, taken from any spot since they all share dates.
+const pickableDays = () => forecast[0].days.slice(0, PICKABLE_DAYS);
+
+// "Wed", "Wed and Sat", "Wed, Thu and Sat".
+function listOfDays(days) {
+  const names = days.map((day) => (day.dayIndex === 0 ? 'today' : dayName(day)));
+  return names.length < 2 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`;
+}
+
+// The stretch the view covers, as a phrase: "today", "in the next 5 days", "on Wed and Sat".
+function periodText() {
+  if (view.dates) {
+    const days = daysInView(pickableDays(), view);
+    if (days.length === 1 && days[0].dayIndex === 0) return 'today';
+    return `on ${listOfDays(days)}`;
+  }
+  return view.rangeDays === 1 ? 'today' : `in the next ${view.rangeDays} days`;
+}
+
 function ratingBadge(rating) {
   const value = rating ?? MISSING;
   return `<span class="badge badge-${rating ?? 'none'}" role="img" aria-label="Rating ${value} of 5, ${ratingLabel(rating)}">${value}</span>`;
@@ -107,13 +130,16 @@ function whenWithTime(day, slot) {
 }
 
 // Reads as a phrase: "Good on Tue", "Fair today", "Great Sat evening", "Skip it all 5 days".
-function ratingPhrase(best, rangeDays, time) {
+function ratingPhrase(best, time) {
   if (!best) return ratingLabel(null);
   const { day, slot } = best;
   const label = ratingLabel(slot.rating);
   if (slot.past) return `Earlier today: ${label}`;
   if (slot.tooLate) return `Too late to drive today: ${label}`;
-  if (slot.rating === 1) return rangeDays > 1 ? `${label} all ${rangeDays} days` : `${label} today`;
+  if (slot.rating === 1) {
+    const count = daysInView(pickableDays(), view).length;
+    return count > 1 ? `${label} all ${count} days` : `${label} ${periodText()}`;
+  }
   if (time === ALL_DAY) return `${label} ${whenWithTime(day, slot)}${unsureNote(slot)}`;
   const when = day.dayIndex === 0 ? 'today' : `on ${dayName(day)}`;
   return `${label} ${when}${unsureNote(slot)}`;
@@ -141,12 +167,12 @@ const pickOptions = () => ({
 function renderTopPick() {
   const pick = bestTimeToGo(forecast, view, pickOptions());
   if (!pick) {
-    const days = view.rangeDays === 1 ? 'today' : `in the next ${view.rangeDays} days`;
+    const hint = view.dates ? 'Try picking more days' : 'Try looking further ahead';
     return `
       <div class="top-pick top-pick-none">
         <span class="top-pick-label">Best time to go</span>
-        <strong class="top-pick-title">Nothing rated ${profile.worthSurfingRating}+ ${days}</strong>
-        <span>Try looking further ahead or allowing a longer drive.</span>
+        <strong class="top-pick-title">Nothing rated ${profile.worthSurfingRating}+ ${periodText()}</strong>
+        <span>${hint} or allowing a longer drive.</span>
       </div>`;
   }
   const { spot, day, slot } = pick;
@@ -230,6 +256,23 @@ const timeRow = () =>
     true,
   );
 
+// One button per day, showing the weekday over the date: "Wed" over "11".
+function dayPicker() {
+  const buttons = pickableDays()
+    .map((day) => {
+      const full = formatDate(day.date, { weekday: 'long', month: 'long', day: 'numeric' });
+      return `<button type="button" class="chip day-chip" data-date="${day.date}" aria-label="${full}">
+        <span>${dayName(day)}</span><span class="day-chip-date">${formatDate(day.date, { day: 'numeric' })}</span>
+      </button>`;
+    })
+    .join('');
+  return `
+    <div class="control-row" role="group" aria-label="Or pick days">
+      <span class="control-label">Or pick the days you're free</span>
+      <div class="day-picks">${buttons}</div>
+    </div>`;
+}
+
 function renderControls() {
   const ranges = RANGES.map(({ days, label }) => chip(label, `data-range="${days}"`)).join('');
   const sorts = Object.entries(SORTS)
@@ -246,6 +289,7 @@ function renderControls() {
     <div class="controls">
       ${timeRow()}
       ${controlRow('Look ahead', ranges, true)}
+      ${dayPicker()}
     </div>
     <div class="list-head">
       <details class="more-controls">
@@ -265,7 +309,7 @@ function renderControls() {
 }
 
 function renderSpotRow(spot) {
-  const best = bestDayInRange(spot, view.rangeDays, view.time);
+  const best = bestDayInView(spot, view);
   const final = best?.slot.final;
   const drive = formatDriveShort(driveMinutes(spot, profile.home));
   return `
@@ -278,7 +322,7 @@ function renderSpotRow(spot) {
             <strong class="row-value">${formatFt(final?.waveHeightFt)}</strong>
           </span>
           <span class="row-line row-detail">
-            <span>${ratingPhrase(best, view.rangeDays, view.time)}${drive ? ` · <span class="row-drive">${icon('car', 14)} ${drive}</span>` : ''}</span>
+            <span>${ratingPhrase(best, view.time)}${drive ? ` · <span class="row-drive">${icon('car', 14)} ${drive}</span>` : ''}</span>
             <span class="row-value">${formatPeriod(final?.swellPeriodS)}</span>
           </span>
           ${best ? windNote(best.slot) : ''}
@@ -294,9 +338,9 @@ function renderMap(visible) {
 
   const pinMarkup = pins
     .map(({ spot, x, y }) => {
-      const best = bestDayInRange(spot, view.rangeDays, view.time);
+      const best = bestDayInView(spot, view);
       const rating = best?.slot.rating ?? null;
-      const summary = `${spot.name}: ${ratingPhrase(best, view.rangeDays, view.time)}`;
+      const summary = `${spot.name}: ${ratingPhrase(best, view.time)}`;
       const isPick = pick?.spot.id === spot.id;
       return `
         <a href="#${escapeHtml(spot.id)}" class="map-pin" aria-label="${escapeHtml(summary)}">
@@ -362,8 +406,9 @@ function renderMap(visible) {
 }
 
 function isSelected(button) {
-  const { range, time, sort, worth, drive, display } = button.dataset;
-  if (range) return Number(range) === view.rangeDays;
+  const { range, date, time, sort, worth, drive, display } = button.dataset;
+  if (range) return !view.dates && Number(range) === view.rangeDays;
+  if (date) return Boolean(view.dates?.includes(date));
   if (time) return time === view.time;
   if (sort) return sort === view.sort;
   if (worth) return view.worthSurfingOnly;
@@ -378,14 +423,10 @@ function updateChips() {
 }
 
 function listSummaryText() {
-  const days = view.rangeDays;
-  if (view.time === ALL_DAY) {
-    return days === 1 ? "Today's best time to go." : `Best time to go in the next ${days} days.`;
-  }
+  const period = periodText();
+  if (view.time === ALL_DAY) return `Best time to go ${period}.`;
   const window = profile.windows[view.time];
-  const name = window.label.toLowerCase();
-  const hours = windowHours(window);
-  return days === 1 ? `Today's ${name} rating (${hours}).` : `Best ${name} in the next ${days} days (${hours}).`;
+  return `Best ${window.label.toLowerCase()} ${period} (${windowHours(window)}).`;
 }
 
 function filterSummaryText() {
@@ -573,8 +614,9 @@ function refresh() {
 main.addEventListener('click', (event) => {
   const button = event.target.closest('.chip');
   if (!button) return;
-  const { range, time, sort, worth, drive, display } = button.dataset;
-  if (range) view.rangeDays = Number(range);
+  const { range, date, time, sort, worth, drive, display } = button.dataset;
+  if (range) view = { ...view, rangeDays: Number(range), dates: null };
+  else if (date) view = toggleDate(view, date, pickableDays().map((day) => day.date));
   else if (time) view.time = time;
   else if (sort) view.sort = sort;
   else if (worth) view.worthSurfingOnly = !view.worthSurfingOnly;
@@ -593,6 +635,7 @@ async function load() {
   status.textContent = '';
   try {
     forecast = await loadForecast(spots, buoys, settings);
+    view = keepKnownDates(view, pickableDays().map((day) => day.date));
     const time = new Intl.DateTimeFormat('en-US', { timeStyle: 'short' }).format(new Date());
     const hasWind = forecast.some((spot) => Number.isFinite(spot.days[0].wind.morning.speedMph));
     status.textContent = `Updated ${time}${hasWind ? '' : ' · Wind unavailable'}`;

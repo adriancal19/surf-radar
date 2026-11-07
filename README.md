@@ -16,7 +16,7 @@ I don't get to surf often, so a wasted trip costs me a lot. I wanted something t
 
 ## What it does
 
-- **Names the best time to go**, based on when you're free, how far ahead you're looking and how far you'll drive.
+- **Names the best time to go**, based on when you're free, how far ahead you're looking (or the exact days you pick) and how far you'll drive.
 - **Rates each spot from 1 to 5** for morning, midday and evening, using my preferences for wave size and swell period.
 - **Labels its confidence**, based on how far ahead the day is and how much the forecast models disagree.
 - **Checks against live buoys**, showing what the nearest buoy is measuring next to the forecast.
