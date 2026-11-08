@@ -12,6 +12,12 @@ on:
 permissions:
   contents: write
 
+# An outside timer starts this on time, and GitHub's own schedule stays on as a backup.
+# This keeps two copies from running at once. The alert job's sent record stops repeat emails.
+concurrency:
+  group: fetch-data
+  cancel-in-progress: false
+
 jobs:
   fetch:
     runs-on: ubuntu-latest
