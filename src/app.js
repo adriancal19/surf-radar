@@ -147,8 +147,12 @@ function windowHours({ startHour, endHour }) {
 const windowName = (slot) => profile.windows[slot.name].label.toLowerCase();
 const unsureNote = (slot) => (slot.confidence === LOW ? ' (unsure)' : '');
 
+// A blown-out day says so, since otherwise big surf with a low rating looks like a mistake.
+const windText = (slot) =>
+  slot.final?.blownOut ? `Blown out: ${slot.windWarning.split(',')[0].toLowerCase()}` : slot.windWarning;
+
 const windNote = (slot) =>
-  slot.windWarning ? `<span class="wind-warning">${icon('wind', 14)} ${slot.windWarning}</span>` : '';
+  slot.windWarning ? `<span class="wind-warning">${icon('wind', 14)} ${windText(slot)}</span>` : '';
 
 // "this morning", "midday today" or "Sat evening".
 function whenWithTime(day, slot) {
@@ -550,7 +554,7 @@ function renderWindowLine(slot) {
   return `
     <li>
       ${icon(TIME_ICONS[slot.name], 15)}
-      <span><strong>${label}:</strong> rated ${slot.rating ?? MISSING} · ${formatSurf(slot.final)}, ${formatBody(slot.final).toLowerCase()} · ${formatWind(slot.wind)}${slot.windWarning ? ` · <span class="wind-warning-inline">${slot.windWarning}</span>` : ''}
+      <span><strong>${label}:</strong> rated ${slot.rating ?? MISSING} · ${formatSurf(slot.final)}, ${formatBody(slot.final).toLowerCase()} · ${formatWind(slot.wind)}${slot.windWarning ? ` · <span class="wind-warning-inline">${windText(slot)}</span>` : ''}
         <span class="window-small">${makeupNote(slot.final)}</span></span>
     </li>`;
 }
@@ -609,7 +613,7 @@ function renderSpot(spot) {
     <section>
       <h2>${icon('sun', 18)} Day by day</h2>
       <div class="controls">${timeRow()}</div>
-      <p class="intro">Tap a day to compare morning, midday and evening. Wind doesn't affect the rating.</p>
+      <p class="intro">Tap a day to compare morning, midday and evening. Wind only lowers the rating when it blows the surf out.</p>
       <ol class="day-list" id="day-list">${spot.days.map(renderDay).join('')}</ol>
     </section>`;
   updateChips();

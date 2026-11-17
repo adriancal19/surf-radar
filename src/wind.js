@@ -1,5 +1,5 @@
-// A plain warning for wind that could spoil a session. It's shown next to the rating and
-// never changes it. This coast faces roughly east, so wind from the east side blows onshore.
+// A plain warning for wind that could spoil a session, shown next to the rating. On its own
+// it doesn't change the rating, but with mostly wind chop it marks a day blown out (rating.js). This coast faces roughly east, so wind from the east side blows onshore.
 
 export function windWarning({ speedMph, directionDeg }, rules) {
   if (!Number.isFinite(speedMph)) return null;

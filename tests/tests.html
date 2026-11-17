@@ -28,7 +28,7 @@
       import { confidenceLabel, HIGH, MEDIUM, LOW } from '../src/confidence.js';
       import { averageDirection, buildBuoyStatus, buildSpotForecast, localHourKey } from '../src/pipeline.js';
       import { ALL_DAY, applyView, bestDay, bestDayInRange, bestDayInView, bestTimeToGo, daysInView, DEFAULT_VIEW, keepKnownDates, toggleDate, formatDrive, formatDriveShort, restoreView, slotForTime } from '../src/filters.js';
-      import { interpolate, scoreConditions, scoreDay, toRating } from '../src/rating.js';
+      import { interpolate, isBlownOut, scoreConditions, scoreDay, toRating } from '../src/rating.js';
       import { bodyLabel, chopNote, surfHeightFt, surfRange, windChopShare } from '../src/surf.js';
       import { parseMarineLocation, parseWindLocation } from '../src/sources/open-meteo.js';
 
@@ -46,7 +46,7 @@
         );
 
       const profile = settings.profiles.adrian;
-      const score = (surfHeightFt, windChopShare = null) => scoreConditions({ surfHeightFt, windChopShare }, profile);
+      const score = (surfHeightFt, windChopShare = null, blownOut = false) => scoreConditions({ surfHeightFt, windChopShare, blownOut }, profile);
       const rules = settings.confidence;
 
       // --- Blend ---
@@ -61,7 +61,7 @@
 
       // --- Rating ---
       same('rating: interpolate is flat before the first point', interpolate(profile.chopCurve, 0), 0.5);
-      same('rating: interpolate is flat after the last point', interpolate(profile.chopCurve, 1), -0.5);
+      same('rating: interpolate is flat after the last point', interpolate(profile.chopCurve, 1), -1.5);
       same('rating: under ankle high scores 1', score(0.9), 1);
       same('rating: clean swell can not lift a tiny day', score(0.9, 0), 1);
       same('rating: shin high is marginal', toRating(score(1.2)), 2);
@@ -73,10 +73,18 @@
       same('rating: big days stay capped at 5', score(12, 0), 5);
       same('rating: halfway between size points', score(1.25), 2);
       same('rating: mostly clean swell adds half a point', score(2, 0.2), 3.5);
-      same('rating: mostly wind chop takes off half a point', score(2, 0.8), 2.5);
+      same('rating: mostly wind chop takes off a point', score(2, 0.7), 2);
+      same('rating: almost all chop takes off a point and a half', score(2, 0.9), 1.5);
       same('rating: an even mix leaves the score alone', score(2, 0.5), 3);
       same('rating: clean thigh high can reach good', toRating(score(2.2, 0.2)), 4);
-      same('rating: choppy waist high drops to fair', toRating(score(2.7, 0.9)), 3);
+      same('rating: choppy waist high drops to fair', toRating(score(2.7, 0.7)), 3);
+      same('rating: blown out caps a big day at 2', score(7, 0.9, true), 2);
+      same('rating: blown out never raises a small day', score(1.2, 0.9, true), 1);
+      same('rating: without the cap, a big choppy day would still rate 4', toRating(score(7, 0.9)), 4);
+      same('rating: blown out needs a wind warning', isBlownOut(0.9, null, profile), false);
+      same('rating: blown out needs mostly chop', isBlownOut(0.5, 'Onshore wind, may be choppy', profile), false);
+      same('rating: mostly chop with a wind warning is blown out', isBlownOut(0.7, 'Onshore wind, may be choppy', profile), true);
+      same('rating: unknown makeup is never blown out', isBlownOut(null, 'Strong wind, may be rough', profile), false);
       same('rating: unknown makeup leaves the score alone', score(2, null), 3);
       same('rating: no surf estimate gives no score', score(null, 0.2), null);
       same('rating: morning counts 75%, midday 25%', scoreDay({ morning: { surfHeightFt: 5 }, midday: { surfHeightFt: 1.5 } }, profile), 4);
@@ -110,6 +118,8 @@
       same('surf: chop note for mostly chop', chopNote(0.9), 'mostly wind chop');
       same('surf: chop note for a mix', chopNote(0.5), 'swell and wind chop');
       check('spots: every spot has a surf factor between 0 and 1', spots.every((spot) => spot.surfFactor > 0 && spot.surfFactor <= 1));
+      const factorOf = (id) => spots.find((spot) => spot.id === id).surfFactor;
+      check('spots: factors shrink from Jupiter to South Beach', ['jupiter-inlet', 'palm-beach', 'lake-worth-pier', 'delray-beach', 'boca-inlet', 'pompano-beach', 'fort-lauderdale', 'hollywood', 'haulover', 'south-beach'].every((id, index, ids) => index === 0 || factorOf(id) <= factorOf(ids[index - 1])));
       check('spots: Sebastian gets more than South Beach', spots.find((spot) => spot.id === 'sebastian-inlet').surfFactor > spots.find((spot) => spot.id === 'south-beach').surfFactor);
       same('rating: no score gives no rating', toRating(null), null);
 
@@ -476,6 +486,11 @@
       const windyForecast = buildSpotForecast({ id: 'test' }, windyData, settings, '2026-11-06T07:00');
       same('wind: warnings reach each slot', windyForecast.days[0].slots.morning.windWarning, 'Onshore wind, may be choppy');
       same('wind: the warning does not change the rating', windyForecast.days[0].slots.morning.score, firstDay.slots.morning.score);
+      const choppyModels = { only: { ...data.models.only, swellHeightFt: times.map(() => 1), windWaveHeightFt: times.map(() => 6) } };
+      const blownDay = buildSpotForecast({ id: 'test' }, { ...windyData, models: choppyModels }, settings, '2026-11-06T07:00').days[0];
+      same('wind: mostly chop plus onshore wind is blown out', blownDay.slots.morning.final.blownOut, true);
+      same('wind: a blown-out window rates 2 at most', blownDay.slots.morning.rating <= 2, true);
+      same('wind: the same chop without wind is not blown out', buildSpotForecast({ id: 'test' }, { ...data, models: choppyModels }, settings, '2026-11-06T07:00').days[0].slots.morning.final.blownOut, false);
 
       // --- Best time to go ---
       const pickDay = (dayIndex, morning, evening, extra = {}) => {

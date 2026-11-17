@@ -40,7 +40,8 @@ export const settings = {
     ],
   },
 
-  // Starting guesses for when to warn about wind. It doesn't change the rating.
+  // Starting guesses for when to warn about wind. On its own it doesn't change the rating;
+  // with mostly wind chop it caps it (see blownOut).
   windWarning: {
     // Wind from this range of compass directions blows onshore.
     onshoreFromDeg: 30,
@@ -111,12 +112,22 @@ export const settings = {
         [6, 5],
       ],
 
-      // [share of the sea that's wind chop, points added]. Mostly clean swell adds half a
-      // point, mostly chop takes one off. In between scales along the line.
+      // [share of the sea that's wind chop, points added]. Lopsided on purpose: chop spoils a
+      // day more than clean swell improves one. In between scales along the line.
       chopCurve: [
-        [0.35, 0.5],
-        [0.65, -0.5],
+        [0.3, 0.5],
+        [0.5, 0],
+        [0.7, -1],
+        [0.85, -1.5],
       ],
+
+      // Blown out: mostly chop with a wind warning on top. Size doesn't make up for it, so the
+      // score can't go above maxScore however big it is. Checked against the Juno Beach Pier
+      // cams on 2026-11-17: head high and overhead, but no lines.
+      blownOut: {
+        minChopShare: 0.65,
+        maxScore: 2,
+      },
 
       // Hours are local time. endHour is not included (6–10 means 6:00 through 9:59).
       // The page rates each window on its own. Weight only sets the whole-day score,

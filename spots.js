@@ -16,8 +16,10 @@
 //
 // surfFactor is how much of the offshore height reaches this beach as surf, before the period
 // factor in settings.js. It's mostly down to the Bahamas blocking swell further south, and how
-// wide the shallow shelf is. Starting guesses from each spot's exposure: Sebastian's jetty
-// focuses swell, and South Beach (0.45) was checked against its cam on 2026-11-17.
+// wide the shallow shelf is. Two are checked against cams on 2026-11-17: South Beach (0.45) and
+// Jupiter (0.75, matching the Juno Beach Pier cams). Spots between them follow a straight line
+// by latitude. North of Jupiter they're starting guesses from exposure; Sebastian's jetty
+// focuses swell.
 //
 // beach is the shore itself, used to draw the map.
 //
@@ -118,7 +120,7 @@ export const spots = [
     lat: 26.708,
     lon: -79.958,
     buoyId: '41122',
-    surfFactor: 0.65,
+    surfFactor: 0.7,
     driveMinutes: { doral: 80 },
     cams: [{ label: 'Palm Beach cams (The Palm Beaches)', url: 'https://www.thepalmbeaches.com/beachcam' }],
   },
@@ -129,7 +131,7 @@ export const spots = [
     lat: 26.61,
     lon: -80.02,
     buoyId: '41122',
-    surfFactor: 0.65,
+    surfFactor: 0.68,
     driveMinutes: { doral: 75 },
     cams: [{ label: 'Lake Worth Pier North (East Coast Cams)', url: 'https://www.eastcoastcams.com/florida/lake-worth/lake-worth-pier-north/' }],
   },
@@ -140,7 +142,7 @@ export const spots = [
     lat: 26.46,
     lon: -80.05,
     buoyId: '41122',
-    surfFactor: 0.55,
+    surfFactor: 0.64,
     driveMinutes: { doral: 65 },
     cams: [{ label: 'Delray Beach cams (The Palm Beaches)', url: 'https://www.thepalmbeaches.com/beachcam' }],
   },
@@ -151,7 +153,7 @@ export const spots = [
     lat: 26.375,
     lon: -79.958,
     buoyId: '41122',
-    surfFactor: 0.55,
+    surfFactor: 0.6,
     driveMinutes: { doral: 59 },
     cams: [{ label: 'Boca Raton cams (Live Beaches)', url: 'https://www.livebeaches.com/city/boca-raton-fl/' }],
   },
@@ -162,7 +164,7 @@ export const spots = [
     lat: 26.292,
     lon: -79.958,
     buoyId: '41122',
-    surfFactor: 0.55,
+    surfFactor: 0.6,
     driveMinutes: { doral: 58 },
     cams: [{ label: 'Deerfield Beach (SkylineWebcams)', url: 'https://www.skylinewebcams.com/en/webcam/united-states/florida/deerfield-beach/deerfield-beach.html' }],
   },
@@ -173,7 +175,7 @@ export const spots = [
     lat: 26.208,
     lon: -79.958,
     buoyId: '41122',
-    surfFactor: 0.55,
+    surfFactor: 0.57,
     driveMinutes: { doral: 53 },
     cams: [{ label: 'Pompano Beach Pier (Visit Pompano Beach)', url: 'https://www.visitpompanobeach.com/webcams/' }],
   },
@@ -184,7 +186,7 @@ export const spots = [
     lat: 26.125,
     lon: -79.958,
     buoyId: '41122',
-    surfFactor: 0.55,
+    surfFactor: 0.54,
     driveMinutes: { doral: 47 },
     cams: [{ label: 'Fort Lauderdale Beach (SkylineWebcams)', url: 'https://www.skylinewebcams.com/webcam/united-states/florida/fort-lauderdale/beach.html' }],
   },
@@ -195,7 +197,7 @@ export const spots = [
     lat: 26.01,
     lon: -80.1,
     buoyId: '41122',
-    surfFactor: 0.5,
+    surfFactor: 0.51,
     driveMinutes: { doral: 37 },
     cams: [{ label: 'Hollywood Beach Broadwalk (YouTube)', url: 'https://www.youtube.com/live/cmkAbDUEoyA' }],
   },
@@ -206,7 +208,7 @@ export const spots = [
     lat: 25.9,
     lon: -80.11,
     buoyId: '41122',
-    surfFactor: 0.5,
+    surfFactor: 0.48,
     driveMinutes: { doral: 33 },
     cams: [{ label: 'Haulover Inlet (Salty Forecast)', url: 'https://saltyforecast.com/cams/haulover-inlet-cam' }],
   },
