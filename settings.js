@@ -26,6 +26,20 @@ export const settings = {
     maxSpots: 5,
   },
 
+  // The surf estimate: offshore height × the spot's surfFactor (spots.js) × this period factor.
+  // Starting guesses, with South Beach checked against its cam on 2026-11-17.
+  surf: {
+    // [wave period in seconds, factor]. Longer periods lose less crossing the shelf and
+    // grow more in shallow water.
+    periodCurve: [
+      [5, 0.7],
+      [6, 0.8],
+      [8, 1],
+      [10, 1.15],
+      [12, 1.3],
+    ],
+  },
+
   // Starting guesses for when to warn about wind. It doesn't change the rating.
   windWarning: {
     // Wind from this range of compass directions blows onshore.
@@ -80,23 +94,28 @@ export const settings = {
       name: 'Adrian',
       home: 'doral',
 
-      // Anything smaller than this rates 1, whatever the period.
-      minWaveFt: 2.5,
+      // Ratings use the estimated surf at the beach (see surf below), not the offshore height.
+      // Anything under ankle high rates 1, however clean.
+      minSurfFt: 1,
 
-      // The lowest rating the "only worth surfing" filter keeps.
+      // The lowest rating the "only worth surfing" filter keeps. Knee high is the start of 3.
       worthSurfingRating: 3,
 
-      // [wave height in ft, score]. Straight lines between points, flat past the last one.
+      // [surf height in ft, score]. Straight lines between points, flat past the last one.
+      // Scores round to the rating: shin high 2, knee to thigh 3, waist to chest 4, head high 5.
       sizeCurve: [
-        [2.5, 2.5],
-        [4, 4.5],
-        [5, 5],
+        [1, 1.5],
+        [1.5, 2.5],
+        [2.5, 3.5],
+        [5, 4.5],
+        [6, 5],
       ],
 
-      // [swell period in seconds, points added to the score].
-      periodCurve: [
-        [6, -0.5],
-        [8, 0.5],
+      // [share of the sea that's wind chop, points added]. Mostly clean swell adds half a
+      // point, mostly chop takes one off. In between scales along the line.
+      chopCurve: [
+        [0.35, 0.5],
+        [0.65, -0.5],
       ],
 
       // Hours are local time. endHour is not included (6–10 means 6:00 through 9:59).
@@ -115,8 +134,8 @@ export const settings = {
     highThroughDay: 3,
     mediumThroughDay: 5,
 
-    // Model disagreement, in ft. Unused until Phase 1.5 adds more models.
-    // These are starting guesses to tune once real spread data is available.
+    // Model disagreement in offshore wave height, in ft: the highest model minus the lowest.
+    // Starting guesses to tune.
     agreeSpreadFt: 1,
     bigDisagreementSpreadFt: 2,
   },

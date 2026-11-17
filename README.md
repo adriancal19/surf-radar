@@ -17,7 +17,8 @@ I don't get to surf often, so a wasted trip costs me a lot. I wanted something t
 ## What it does
 
 - **Names the best time to go**, based on when you're free, how far ahead you're looking (or the exact days you pick) and how far you'll drive.
-- **Rates each spot from 1 to 5** for morning, midday and evening, using my preferences for wave size and swell period.
+- **Estimates the surf at the beach**, not just the offshore number, and shows it as a range and a body height like "2–3 ft · Waist high".
+- **Rates each spot from 1 to 5** for morning, midday and evening, from that surf estimate and how clean or choppy the sea is.
 - **Labels its confidence**, based on how far ahead the day is and how much the forecast models disagree.
 - **Checks against live buoys**, showing what the nearest buoy is measuring next to the forecast.
 - **Warns about wind** that could spoil a session, and flags tropical systems that could send swell.
@@ -57,13 +58,15 @@ There's no server. The site is plain HTML, CSS and JavaScript on GitHub Pages, a
 
 **Tuning from results.** The first rating rules made 3 ft days "Great" once blending raised the swell periods. The numbers showed the period bonus was too strong, so I cut it in half. Every rating rule lives in one settings file, so changes like that take one line.
 
+**Separating offshore from the beach.** The models report wave height 12–22 km offshore. On a day they read 6–8 ft, the South Beach cam showed about 2–3 ft of choppy surf. Each spot now has a fixed factor for how much swell reaches it (the Bahamas block more the further south you go), multiplied by a factor that grows with wave period, since longer-period waves lose less crossing the shelf. Period is counted only there, not again in the rating, which instead gets a small nudge for how much of the sea is wind chop rather than clean swell.
+
 **Recommending only what's reachable.** An early version suggested a spot "this evening" at 3:30 pm, even though the drive would end around sunset. Today's times now count only if you could get there with 90 minutes left to surf.
 
 **Cutting a feature.** I planned a session log to calibrate ratings against real trips. Since it needs regular sessions per spot to mean anything, and I rarely go, I skipped it and built the "best time to go" answer and cam links instead.
 
 ## Known limitations
 
-- **Heights are modeled offshore**, usually 12–22 km out on most of this coast, so they aren't what breaks at the beach. Comparisons between spots at different distances from shore can mislead.
+- **Surf heights are estimates.** They come from offshore models, usually 12–22 km out, scaled by per-spot and period factors that are starting guesses. Only South Beach has been checked against a cam so far. The spot factors also ignore swell direction, so they likely undersell South Florida on northeast swells.
 - **Ratings aren't fully tuned yet.** They rest on my starting preferences and need checking against more real sessions.
 - **Drive times are estimates** without traffic, calibrated to a single real-world trip.
 - **Cam links can go stale**, because they point to other people's sites. Each spot also has a live YouTube search as a fallback.

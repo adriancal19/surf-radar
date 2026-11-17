@@ -1,9 +1,11 @@
-// Runs the steps in order: fetch → group into days → blend → correct → rate → label confidence.
+// Runs the steps in order: fetch → group into days → blend → correct → estimate surf → rate →
+// label confidence.
 //
 // Each day keeps every stage so later phases can plug in without reshaping anything:
 //   raw       per-model values for each window
 //   blended   models combined
-//   final     what gets rated: blended, with wave height adjusted by the nearest buoy
+//   final     blended, with heights adjusted by the nearest buoy, plus the surf estimate that
+//             gets rated
 //   slots     one per time of day: final values, wind, score, rating, spread and confidence
 //   score     the whole day, weighted by the profile; rating is the rounded version
 //   flags     notes for that day, like a tropical system that could send swell
@@ -13,6 +15,7 @@ import { confidenceLabel } from './confidence.js';
 import { driveMinutes } from './filters.js';
 import { computeBias, correctionFactor, distanceKm, distanceStrength } from './correction.js';
 import { scoreConditions, scoreDay, toRating } from './rating.js';
+import { withSurf } from './surf.js';
 import { fetchBuoyData } from './sources/ndbc.js';
 import { fetchTropicalData, flagsForDay } from './sources/nhc.js';
 import { fetchMarine, fetchOpenMeteo } from './sources/open-meteo.js';
@@ -77,14 +80,18 @@ function hoursAheadOfWindow(window, date, nowKey) {
   return Math.max(0, (localMs(date, middle) - localMs(dateOf(nowKey), nowHour)) / 3600000);
 }
 
+// The buoy correction scales every height together, so the swell and chop still add up.
+const HEIGHT_FIELDS = ['waveHeightFt', 'swellHeightFt', 'windWaveHeightFt'];
+
 function scaled(values, factor) {
-  return {
-    ...values,
-    waveHeightFt: Number.isFinite(values.waveHeightFt) ? values.waveHeightFt * factor : values.waveHeightFt,
-  };
+  const result = { ...values };
+  for (const field of HEIGHT_FIELDS) {
+    if (Number.isFinite(values[field])) result[field] = values[field] * factor;
+  }
+  return result;
 }
 
-function buildDay(data, date, dayIndex, settings, profile, nowKey, buoy, tropical, drive) {
+function buildDay(data, date, dayIndex, settings, profile, nowKey, buoy, tropical, drive, surfFactor) {
   const raw = Object.fromEntries(Object.keys(data.models).map((modelId) => [modelId, {}]));
   const blended = {};
   const final = {};
@@ -102,7 +109,11 @@ function buildDay(data, date, dayIndex, settings, profile, nowKey, buoy, tropica
       Object.keys(data.models).map((modelId) => raw[modelId][name]),
     );
     blended[name] = values;
-    final[name] = scaled(values, factorAt(buoy, hoursAheadOfWindow(window, date, nowKey), settings));
+    final[name] = withSurf(
+      scaled(values, factorAt(buoy, hoursAheadOfWindow(window, date, nowKey), settings)),
+      surfFactor,
+      settings.surf,
+    );
     wind[name] = windAt(data.wind, indexes);
     if (heightSpreadFt !== null) spreadFt = Math.max(spreadFt ?? 0, heightSpreadFt);
 
@@ -143,12 +154,16 @@ function buildDay(data, date, dayIndex, settings, profile, nowKey, buoy, tropica
   };
 }
 
-function buildNow(data, nowKey, buoy, settings) {
+function buildNow(data, nowKey, buoy, settings, surfFactor) {
   const index = data.times.indexOf(nowKey);
   if (index === -1) return null;
   const readings = Object.values(data.models).map((series) => readingsAt(series, [index]));
   const { heightSpreadFt, ...values } = blendReadings(readings);
-  return { time: nowKey, ...scaled(values, factorAt(buoy, 0, settings)), wind: windAt(data.wind, [index]) };
+  return {
+    time: nowKey,
+    ...withSurf(scaled(values, factorAt(buoy, 0, settings)), surfFactor, settings.surf),
+    wind: windAt(data.wind, [index]),
+  };
 }
 
 // Compares one buoy's readings with the blended models at the buoy's own location.
@@ -182,13 +197,15 @@ export function buildSpotForecast(spot, data, settings, nowKey, buoyStatus = nul
   const dates = [...new Set(data.times.map(dateOf))];
   const buoy = buoyForSpot(spot, buoyStatus, settings);
   const drive = driveMinutes(spot, profile.home) ?? 0;
+  // A spot without its own factor is treated as fully open.
+  const surfFactor = spot.surfFactor ?? 1;
   return {
     ...spot,
     buoy,
     nowFactor: factorAt(buoy, 0, settings),
-    now: buildNow(data, nowKey, buoy, settings),
+    now: buildNow(data, nowKey, buoy, settings, surfFactor),
     days: dates.map((date, dayIndex) =>
-      buildDay(data, date, dayIndex, settings, profile, nowKey, buoy, tropical, drive),
+      buildDay(data, date, dayIndex, settings, profile, nowKey, buoy, tropical, drive, surfFactor),
     ),
   };
 }

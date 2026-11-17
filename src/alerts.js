@@ -3,6 +3,7 @@
 
 import { driveMinutes, formatDrive } from './filters.js';
 import { ratingLabel } from './rating.js';
+import { bodyLabel, surfRange } from './surf.js';
 
 const STATE_KEEP_DAYS = 30;
 const NHC_URL = 'https://www.nhc.noaa.gov/';
@@ -64,7 +65,8 @@ export function buildSurfEmail(alerts, settings) {
       .filter(Boolean)
       .map((alert) => `${profile.windows[alert.slot.name].label} rated ${alert.slot.rating}`)
       .join(', ');
-    const size = `${best.final.waveHeightFt.toFixed(1)} ft at ${best.final.swellPeriodS?.toFixed(1) ?? '?'} s`;
+    const offshore = `${best.final.waveHeightFt.toFixed(1)} ft offshore at ${best.final.wavePeriodS?.toFixed(1) ?? '?'} s`;
+    const size = `${surfRange(best.final.surfHeightFt)}, ${bodyLabel(best.final.surfHeightFt).toLowerCase()} (${offshore})`;
     const drive = formatDrive(driveMinutes(spot, profile.home));
     const parts = [
       `${windows} (${ratingLabel(best.rating)})`,
