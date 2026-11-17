@@ -2,7 +2,7 @@
 //
 //   {
 //     times: ['2026-11-06T00:00', ...],
-//     models: { meteofrance_wave: { waveHeightFt: [...], swellPeriodS: [...], wavePeriodS: [...] } },
+//     models: { meteofrance_wave: { waveHeightFt: [...], wavePeriodS: [...], swellHeightFt: [...], ... } },
 //     wind: { speedMph: [...], directionDeg: [...] } or null if wind couldn't be loaded,
 //   }
 //
@@ -12,10 +12,15 @@
 const MARINE_URL = 'https://marine-api.open-meteo.com/v1/marine';
 const WEATHER_URL = 'https://api.open-meteo.com/v1/forecast';
 
+// waveHeightFt and wavePeriodS cover the whole sea, offshore. Swell and wind chop are its two
+// parts, used for the clean-or-choppy nudge and the small print.
 const MARINE_FIELDS = {
   waveHeightFt: 'wave_height',
-  swellPeriodS: 'swell_wave_period',
   wavePeriodS: 'wave_period',
+  swellHeightFt: 'swell_wave_height',
+  swellPeriodS: 'swell_wave_period',
+  windWaveHeightFt: 'wind_wave_height',
+  windWavePeriodS: 'wind_wave_period',
 };
 
 function locationParams(spots, settings) {

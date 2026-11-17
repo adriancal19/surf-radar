@@ -29,6 +29,7 @@
       import { averageDirection, buildBuoyStatus, buildSpotForecast, localHourKey } from '../src/pipeline.js';
       import { ALL_DAY, applyView, bestDay, bestDayInRange, bestDayInView, bestTimeToGo, daysInView, DEFAULT_VIEW, keepKnownDates, toggleDate, formatDrive, formatDriveShort, restoreView, slotForTime } from '../src/filters.js';
       import { interpolate, scoreConditions, scoreDay, toRating } from '../src/rating.js';
+      import { bodyLabel, chopNote, surfHeightFt, surfRange, windChopShare } from '../src/surf.js';
       import { parseMarineLocation, parseWindLocation } from '../src/sources/open-meteo.js';
 
       const results = [];
@@ -45,7 +46,7 @@
         );
 
       const profile = settings.profiles.adrian;
-      const score = (waveHeightFt, swellPeriodS) => scoreConditions({ waveHeightFt, swellPeriodS }, profile);
+      const score = (surfHeightFt, windChopShare = null) => scoreConditions({ surfHeightFt, windChopShare }, profile);
       const rules = settings.confidence;
 
       // --- Blend ---
@@ -59,28 +60,57 @@
       same('blend: readings with two models report height spread', blendReadings([{ waveHeightFt: 3 }, { waveHeightFt: 4 }]), { waveHeightFt: 3.5, heightSpreadFt: 1 });
 
       // --- Rating ---
-      same('rating: interpolate is flat before the first point', interpolate(profile.periodCurve, 3), -0.5);
-      same('rating: interpolate is flat after the last point', interpolate(profile.periodCurve, 12), 0.5);
-      same('rating: under 2.5 ft scores 1', score(2.4, 7), 1);
-      same('rating: a long period can not lift a small day', score(1.5, 12), 1);
-      same('rating: 2.5 ft at a neutral period scores 2.5', score(2.5, 7), 2.5);
-      same('rating: 4 ft at a neutral period scores 4.5', score(4, 7), 4.5);
-      same('rating: 5 ft at a neutral period scores 5', score(5, 7), 5);
-      same('rating: halfway between size points', score(3.25, 7), 3.5);
-      same('rating: 6 s takes off half a point', score(4, 6), 4);
-      same('rating: under 6 s still takes off only half a point', score(4, 4), 4);
-      same('rating: 8 s adds half a point', score(3.25, 8), 4);
-      same('rating: 7.5 s adds a quarter point', score(3.25, 7.5), 3.75);
-      same('rating: a 2.7 ft day at 8 s is fair, not good', toRating(score(2.7, 8)), 3);
-      same('rating: a 3.4 ft day at 8 s is good, not great', toRating(score(3.4, 8)), 4);
-      same('rating: a 3.9 ft day at 8 s is great', toRating(score(3.9, 8)), 5);
-      same('rating: big days stay capped at 5', score(10, 14), 5);
-      same('rating: missing period leaves the score alone', score(4, null), 4.5);
-      same('rating: missing height gives no score', score(null, 8), null);
-      same('rating: morning counts 75%, midday 25%', scoreDay({ morning: { waveHeightFt: 4, swellPeriodS: 7 }, midday: { waveHeightFt: 2.5, swellPeriodS: 7 } }, profile), 4);
-      same('rating: a missing window gives the other full weight', scoreDay({ morning: { waveHeightFt: null }, midday: { waveHeightFt: 4, swellPeriodS: 7 } }, profile), 4.5);
+      same('rating: interpolate is flat before the first point', interpolate(profile.chopCurve, 0), 0.5);
+      same('rating: interpolate is flat after the last point', interpolate(profile.chopCurve, 1), -0.5);
+      same('rating: under ankle high scores 1', score(0.9), 1);
+      same('rating: clean swell can not lift a tiny day', score(0.9, 0), 1);
+      same('rating: shin high is marginal', toRating(score(1.2)), 2);
+      same('rating: knee high is the start of fair', toRating(score(1.5)), 3);
+      same('rating: thigh high is fair', toRating(score(2.2)), 3);
+      same('rating: waist high is good', toRating(score(2.7)), 4);
+      same('rating: chest high is good', toRating(score(3.8)), 4);
+      same('rating: head high is great', toRating(score(5)), 5);
+      same('rating: big days stay capped at 5', score(12, 0), 5);
+      same('rating: halfway between size points', score(1.25), 2);
+      same('rating: mostly clean swell adds half a point', score(2, 0.2), 3.5);
+      same('rating: mostly wind chop takes off half a point', score(2, 0.8), 2.5);
+      same('rating: an even mix leaves the score alone', score(2, 0.5), 3);
+      same('rating: clean thigh high can reach good', toRating(score(2.2, 0.2)), 4);
+      same('rating: choppy waist high drops to fair', toRating(score(2.7, 0.9)), 3);
+      same('rating: unknown makeup leaves the score alone', score(2, null), 3);
+      same('rating: no surf estimate gives no score', score(null, 0.2), null);
+      same('rating: morning counts 75%, midday 25%', scoreDay({ morning: { surfHeightFt: 5 }, midday: { surfHeightFt: 1.5 } }, profile), 4);
+      same('rating: a missing window gives the other full weight', scoreDay({ morning: { surfHeightFt: null }, midday: { surfHeightFt: 5 } }, profile), 4.5);
       same('rating: no data gives no score', scoreDay({ morning: {}, midday: {} }, profile), null);
-      same('rating: rounds for display', toRating(3.5), 4);
+
+      // --- Surf estimate ---
+      const surfRules = settings.surf;
+      same('surf: 8 s is the neutral period', surfHeightFt({ waveHeightFt: 4, wavePeriodS: 8 }, 1, surfRules), 4);
+      same('surf: the spot factor scales it', surfHeightFt({ waveHeightFt: 4, wavePeriodS: 8 }, 0.5, surfRules), 2);
+      same('surf: short periods shrink it', surfHeightFt({ waveHeightFt: 4, wavePeriodS: 6 }, 1, surfRules), 3.2);
+      same('surf: long periods grow it', surfHeightFt({ waveHeightFt: 4, wavePeriodS: 12 }, 1, surfRules), 5.2);
+      same('surf: periods past the curve stay flat', surfHeightFt({ waveHeightFt: 4, wavePeriodS: 18 }, 1, surfRules), 5.2);
+      same('surf: a missing period counts as neutral', surfHeightFt({ waveHeightFt: 4, wavePeriodS: null }, 1, surfRules), 4);
+      same('surf: no offshore height gives no surf', surfHeightFt({ waveHeightFt: null, wavePeriodS: 8 }, 1, surfRules), null);
+      check('surf: 7 ft of short-period chop at South Beach is about 2.5 ft', Math.abs(surfHeightFt({ waveHeightFt: 7, wavePeriodS: 6 }, spots.find((spot) => spot.id === 'south-beach').surfFactor, surfRules) - 2.52) < 0.01);
+      same('surf: chop share is by energy', windChopShare(2, 6), 0.9);
+      same('surf: all swell has no chop', windChopShare(3, 0), 0);
+      same('surf: unknown parts give an unknown share', windChopShare(null, 2), null);
+      same('surf: a flat sea gives an unknown share', windChopShare(0, 0), null);
+      same('surf: ranges are whole feet', surfRange(2.5), '2–3 ft');
+      same('surf: a range is never a single number', surfRange(1.1), '1–2 ft');
+      same('surf: the range brackets the estimate', surfRange(1.9), '1–2 ft');
+      same('surf: the range agrees with the body height', [surfRange(3), bodyLabel(3)], ['3–4 ft', 'Chest high']);
+      same('surf: bigger days get wider ranges', surfRange(5), '4–6 ft');
+      same('surf: tiny days say so', surfRange(0.6), 'Under 1 ft');
+      same('surf: no estimate gives no range', surfRange(null), null);
+      same('surf: body height at the edge goes up', bodyLabel(2.5), 'Waist high');
+      same('surf: body height for head high', bodyLabel(5.5), 'Head high');
+      same('surf: body height past the list', bodyLabel(7), 'Overhead');
+      same('surf: chop note for mostly chop', chopNote(0.9), 'mostly wind chop');
+      same('surf: chop note for a mix', chopNote(0.5), 'swell and wind chop');
+      check('spots: every spot has a surf factor between 0 and 1', spots.every((spot) => spot.surfFactor > 0 && spot.surfFactor <= 1));
+      check('spots: Sebastian gets more than South Beach', spots.find((spot) => spot.id === 'sebastian-inlet').surfFactor > spots.find((spot) => spot.id === 'south-beach').surfFactor);
       same('rating: no score gives no rating', toRating(null), null);
 
       // --- Confidence ---
@@ -98,7 +128,7 @@
 
       // --- Open-Meteo format ---
       const singleModel = { hourly: { time: ['t0'], wave_height: [3], swell_wave_period: [8], wave_period: [6] } };
-      same('source: reads unsuffixed fields with one model', parseMarineLocation(singleModel, ['a']).models.a, { waveHeightFt: [3], swellPeriodS: [8], wavePeriodS: [6] });
+      same('source: reads unsuffixed fields with one model', parseMarineLocation(singleModel, ['a']).models.a, { waveHeightFt: [3], wavePeriodS: [6], swellHeightFt: [null], swellPeriodS: [8], windWaveHeightFt: [null], windWavePeriodS: [null] });
       const twoModels = { hourly: { time: ['t0'], wave_height_a: [3], swell_wave_period_a: [8], wave_period_a: [6], wave_height_b: [4], wave_period_b: [7] } };
       same('source: reads suffixed fields with two models', parseMarineLocation(twoModels, ['a', 'b']).models.b.waveHeightFt, [4]);
       same('source: a field a model lacks becomes empty values', parseMarineLocation(twoModels, ['a', 'b']).models.b.swellPeriodS, [null]);
@@ -131,7 +161,10 @@
       same('pipeline: groups hours into days', built.days.length, 2);
       same('pipeline: morning ignores hours outside the window', firstDay.final.morning.waveHeightFt, 4);
       same('pipeline: midday ignores hours outside the window', firstDay.final.midday.waveHeightFt, 2.5);
-      same('pipeline: keeps the unrounded score', firstDay.score, 4);
+      same('pipeline: keeps the unrounded score', firstDay.score, 3.4025);
+      same('pipeline: a spot without a factor counts as open', firstDay.final.morning.surfHeightFt, 2.8);
+      same('pipeline: the spot factor reaches the surf estimate', buildSpotForecast({ id: 'test', surfFactor: 0.5 }, data, settings, '2026-11-06T07:00').days[0].final.morning.surfHeightFt, 1.4);
+      same('pipeline: the current hour gets a surf estimate too', built.now.surfHeightFt, 2.8);
       same('pipeline: stores each model under its name', firstDay.raw.only.morning.waveHeightFt, 4);
       same('pipeline: keeps overall wave period', firstDay.final.morning.wavePeriodS, 5);
       same('pipeline: spread is unknown with one model', firstDay.spreadFt, null);
@@ -150,10 +183,10 @@
       same('pipeline: tomorrow has not passed', afternoon[1].slots.morning.past, false);
       same('pipeline: a window in progress has not passed', firstDay.slots.morning.past, false);
       same('pipeline: each time of day gets its own slot', Object.keys(firstDay.slots), ['morning', 'midday', 'evening']);
-      same('pipeline: morning slot has its own rating', firstDay.slots.morning.rating, 5);
+      same('pipeline: morning slot has its own rating', firstDay.slots.morning.rating, 4);
       same('pipeline: midday slot has its own rating', firstDay.slots.midday.rating, 3);
       same('pipeline: evening slot covers 2 pm to 6 pm', firstDay.slots.evening.final.waveHeightFt, 99);
-      same('pipeline: evening does not change the whole-day score', firstDay.score, 4);
+      same('pipeline: evening does not change the whole-day score', firstDay.score, 3.4025);
       const twoModelDay = buildSpotForecast({ id: 'test' }, twoModelData, settings, '2026-11-06T07:00').days[0];
       same('pipeline: each slot keeps its own spread', twoModelDay.slots.morning.spreadFt, 1);
       same('pipeline: slots blend the models', twoModelDay.slots.morning.final.waveHeightFt, 4.5);
@@ -323,7 +356,7 @@
       const thisMorningFt = 4 * (1 - 0.2 * (1 - 1 / 48));
       same('buoys: this morning is adjusted almost fully', corrected.days[0].final.morning.waveHeightFt, thisMorningFt);
       same('buoys: period is not adjusted', corrected.days[0].final.morning.swellPeriodS, 7);
-      same('buoys: ratings use the adjusted height', corrected.days[0].slots.morning.score, scoreConditions({ waveHeightFt: thisMorningFt, swellPeriodS: 7 }, profile));
+      same('buoys: ratings use the adjusted height', corrected.days[0].slots.morning.score, scoreConditions({ surfHeightFt: thisMorningFt * 0.7 }, profile));
       const tomorrowMidday = corrected.days[1].final.midday.waveHeightFt;
       // 12 noon tomorrow is 29 hours ahead, so 1 - 0.2 x (1 - 29/48) of the 2.5 ft forecast.
       same('buoys: the adjustment fades over time', tomorrowMidday, 2.5 * (1 - 0.2 * (1 - 29 / 48)));
@@ -379,7 +412,7 @@
       same('tropical: flags reach the forecast days', buildSpotForecast({ id: 'test' }, data, settings, '2026-11-06T07:00', null, [storm]).days[0].flags[0].systemId, 's');
 
       // --- Alerts ---
-      const alertSlot = (name, rating) => ({ name, rating, confidence: 'High confidence', final: { waveHeightFt: 4.1, swellPeriodS: 8.5 } });
+      const alertSlot = (name, rating) => ({ name, rating, confidence: 'High confidence', final: { waveHeightFt: 7, wavePeriodS: 8.5, surfHeightFt: 3 } });
       const alertDays = (morning, evening) => [0, 1, 2, 3].map((dayIndex) => ({
         dayIndex,
         date: `2026-11-1${dayIndex}`,
@@ -404,7 +437,7 @@
       check('alerts: the subject names the spot and day', surfEmail.subject === 'Surf alert: Jupiter and 1 more on Friday', surfEmail.subject);
       same('alerts: one spot gets a simple subject', buildSurfEmail(findSurfAlerts([alertSpot('Jupiter', 4, 1)], settings, {}), settings).subject, 'Surf alert: Jupiter on Friday');
       check('alerts: the email gives the date', surfEmail.text.includes('Friday, Nov 13'), surfEmail.text);
-      check('alerts: one line per spot, listing both windows', surfEmail.text.includes('Morning rated 4, Evening rated 5 (Great). 4.1 ft at 8.5 s') && surfEmail.text.includes('About 1 hr 35 min from Doral'), surfEmail.text);
+      check('alerts: one line per spot, listing both windows', surfEmail.text.includes('Morning rated 4, Evening rated 5 (Great). 3–4 ft, chest high (7.0 ft offshore at 8.5 s)') && surfEmail.text.includes('About 1 hr 35 min from Doral'), surfEmail.text);
       same('alerts: a spot only appears once', surfEmail.text.split('\n').filter((line) => line === 'Jupiter').length, 1);
       const manySpots = ['a', 'b', 'c', 'd', 'e', 'f', 'g'].map((id, index) => alertSpot(id, 4, 1, 30 + index));
       const cappedEmail = buildSurfEmail(findSurfAlerts(manySpots, settings, {}), settings);

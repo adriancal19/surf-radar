@@ -549,6 +549,20 @@ main,
   white-space: nowrap;
 }
 
+/* The offshore numbers: there for anyone who wants them, without competing with the surf. */
+.row-small,
+.window-small {
+  display: block;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.top-pick-small {
+  margin-top: 2px;
+  font-size: 0.75rem;
+  opacity: 0.8;
+}
+
 /* Map */
 
 .map-card {

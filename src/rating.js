@@ -16,15 +16,17 @@ export function interpolate(points, x) {
   return points[points.length - 1][1];
 }
 
-// Score for one window of conditions. Returns null if there's no wave height.
-export function scoreConditions({ waveHeightFt, swellPeriodS }, profile) {
-  if (!Number.isFinite(waveHeightFt)) return null;
-  if (waveHeightFt < profile.minWaveFt) return MIN_SCORE;
+// Score for one window of conditions, from the estimated surf at the beach plus a nudge for
+// how clean it is. Period isn't scored again: it's already in the surf estimate.
+// Returns null if there's no surf estimate.
+export function scoreConditions({ surfHeightFt, windChopShare }, profile) {
+  if (!Number.isFinite(surfHeightFt)) return null;
+  if (surfHeightFt < profile.minSurfFt) return MIN_SCORE;
 
-  const size = interpolate(profile.sizeCurve, waveHeightFt);
-  // A missing period leaves the score alone rather than counting as short or long.
-  const period = Number.isFinite(swellPeriodS) ? interpolate(profile.periodCurve, swellPeriodS) : 0;
-  return Math.min(MAX_SCORE, Math.max(MIN_SCORE, size + period));
+  const size = interpolate(profile.sizeCurve, surfHeightFt);
+  // Unknown makeup leaves the score alone rather than counting as clean or choppy.
+  const clean = Number.isFinite(windChopShare) ? interpolate(profile.chopCurve, windChopShare) : 0;
+  return Math.min(MAX_SCORE, Math.max(MIN_SCORE, size + clean));
 }
 
 // Scores each window separately, then combines them by weight. If a window has no data,

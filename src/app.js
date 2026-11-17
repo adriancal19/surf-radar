@@ -29,6 +29,7 @@ import { icon } from './icons.js';
 import { landPath, layoutPins, MAP_HEIGHT, MAP_WIDTH, toX, toY } from './map.js';
 import { loadForecast } from './pipeline.js';
 import { ratingLabel } from './rating.js';
+import { bodyLabel, chopNote, surfRange } from './surf.js';
 
 const main = document.querySelector('#main');
 const status = document.querySelector('#status');
@@ -64,6 +65,32 @@ const escapeHtml = (text) =>
 const formatFt = (value) => (Number.isFinite(value) ? `${value.toFixed(1)} ft` : MISSING);
 // One decimal, because small period differences can change the rating.
 const formatPeriod = (value) => (Number.isFinite(value) ? `${value.toFixed(1)} s` : MISSING);
+
+// The headline: estimated surf at the beach, like "2–3 ft".
+const formatSurf = (final) => surfRange(final?.surfHeightFt) ?? MISSING;
+const formatBody = (final) => bodyLabel(final?.surfHeightFt) ?? MISSING;
+
+// The small print: "7.0 ft offshore at 6.0 s · mostly wind chop".
+function offshoreNote(final) {
+  if (!Number.isFinite(final?.waveHeightFt)) return '';
+  const period = Number.isFinite(final.wavePeriodS) ? ` at ${formatPeriod(final.wavePeriodS)}` : '';
+  const makeup = chopNote(final.windChopShare);
+  return `${formatFt(final.waveHeightFt)} offshore${period}${makeup ? ` · ${makeup}` : ''}`;
+}
+
+// The full makeup, for the spot page:
+// "7.0 ft offshore at 6.0 s: swell 2.0 ft at 9.0 s + chop 6.5 ft at 5.0 s".
+function makeupNote(final) {
+  const part = (label, height, period) =>
+    Number.isFinite(height) ? `${label} ${formatFt(height)}${Number.isFinite(period) ? ` at ${formatPeriod(period)}` : ''}` : null;
+  const parts = [
+    part('swell', final?.swellHeightFt, final?.swellPeriodS),
+    part('chop', final?.windWaveHeightFt, final?.windWavePeriodS),
+  ].filter(Boolean);
+  if (!parts.length) return offshoreNote(final);
+  const period = Number.isFinite(final.wavePeriodS) ? ` at ${formatPeriod(final.wavePeriodS)}` : '';
+  return `${formatFt(final.waveHeightFt)} offshore${period}: ${parts.join(' + ')}`;
+}
 
 function compass(degrees) {
   const names = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
@@ -188,9 +215,10 @@ function renderTopPick() {
         <strong class="top-pick-title">${escapeHtml(spot.name)}</strong>
         <span class="top-pick-when">${whenWithTime(day, slot)}${unsureNote(slot)}</span>
         <span class="top-pick-stats">
-          <span>${icon('wave')} ${formatFt(slot.final.waveHeightFt)} at ${formatPeriod(slot.final.swellPeriodS)}</span>
+          <span>${icon('wave')} ${formatSurf(slot.final)} · ${formatBody(slot.final)}</span>
           ${drive ? `<span>${icon('car')} ${drive}</span>` : ''}
         </span>
+        <span class="top-pick-small">${offshoreNote(slot.final)}</span>
         ${windNote(slot)}
       </span>
       <span class="top-pick-rating">
@@ -319,12 +347,13 @@ function renderSpotRow(spot) {
         <span class="row-text">
           <span class="row-line">
             <strong>${escapeHtml(spot.name)}</strong>
-            <strong class="row-value">${formatFt(final?.waveHeightFt)}</strong>
+            <strong class="row-value">${formatSurf(final)}</strong>
           </span>
           <span class="row-line row-detail">
             <span>${ratingPhrase(best, view.time)}${drive ? ` · <span class="row-drive">${icon('car', 14)} ${drive}</span>` : ''}</span>
-            <span class="row-value">${formatPeriod(final?.swellPeriodS)}</span>
+            <span class="row-value">${formatBody(final)}</span>
           </span>
+          <span class="row-small">${offshoreNote(final)}</span>
           ${best ? windNote(best.slot) : ''}
         </span>
       </a>
@@ -472,10 +501,11 @@ function renderNow(spot) {
     <section class="now">
       <h2>${icon('wave', 18)} Forecast right now</h2>
       <dl>
-        ${stat('wave', 'Waves', formatFt(spot.now.waveHeightFt))}
-        ${stat('timer', 'Swell period', formatPeriod(spot.now.swellPeriodS))}
+        ${stat('wave', 'Surf', formatSurf(spot.now))}
+        ${stat('timer', 'Body height', formatBody(spot.now))}
         ${stat('wind', 'Wind', formatWind(spot.now.wind))}
       </dl>
+      <p class="buoy-note">${makeupNote(spot.now)}</p>
     </section>`;
 }
 
@@ -520,7 +550,8 @@ function renderWindowLine(slot) {
   return `
     <li>
       ${icon(TIME_ICONS[slot.name], 15)}
-      <span><strong>${label}:</strong> rated ${slot.rating ?? MISSING} · ${formatFt(slot.final.waveHeightFt)} · ${formatPeriod(slot.final.swellPeriodS)} · ${formatWind(slot.wind)}${slot.windWarning ? ` · <span class="wind-warning-inline">${slot.windWarning}</span>` : ''}</span>
+      <span><strong>${label}:</strong> rated ${slot.rating ?? MISSING} · ${formatSurf(slot.final)}, ${formatBody(slot.final).toLowerCase()} · ${formatWind(slot.wind)}${slot.windWarning ? ` · <span class="wind-warning-inline">${slot.windWarning}</span>` : ''}
+        <span class="window-small">${makeupNote(slot.final)}</span></span>
     </li>`;
 }
 
@@ -535,7 +566,7 @@ function renderDay(day) {
         ? ` · ${windowName(slot)}`
         : '';
   const spreadNote = Number.isFinite(slot.spreadFt)
-    ? `<p>Models differ by ${slot.spreadFt.toFixed(1)} ft for the ${windowName(slot)}.</p>`
+    ? `<p>Models differ by ${slot.spreadFt.toFixed(1)} ft offshore for the ${windowName(slot)}.</p>`
     : '';
   return `
     <li>
@@ -545,11 +576,11 @@ function renderDay(day) {
           <span class="row-text">
             <span class="row-line">
               <strong>${date}</strong>
-              <strong class="row-value">${formatFt(slot.final.waveHeightFt)}</strong>
+              <strong class="row-value">${formatSurf(slot.final)}</strong>
             </span>
             <span class="row-line row-detail">
               <span>${slot.confidence}${timeNote}</span>
-              <span class="row-value">${formatPeriod(slot.final.swellPeriodS)} · ${formatWind(slot.wind)}</span>
+              <span class="row-value">${formatBody(slot.final)} · ${formatWind(slot.wind)}</span>
             </span>
             ${windNote(slot)}
             ${day.flags.map((flag) => `<span class="day-flag">${icon('storm', 14)} ${escapeHtml(flag.text)}</span>`).join('')}
