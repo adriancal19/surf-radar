@@ -14,7 +14,7 @@ import { blendReadings, blendValues } from './blend.js';
 import { confidenceLabel } from './confidence.js';
 import { driveMinutes } from './filters.js';
 import { computeBias, correctionFactor, distanceKm, distanceStrength } from './correction.js';
-import { scoreConditions, scoreDay, toRating } from './rating.js';
+import { isBlownOut, scoreConditions, scoreDay, toRating } from './rating.js';
 import { withSurf } from './surf.js';
 import { fetchBuoyData } from './sources/ndbc.js';
 import { fetchTropicalData, flagsForDay } from './sources/nhc.js';
@@ -109,12 +109,14 @@ function buildDay(data, date, dayIndex, settings, profile, nowKey, buoy, tropica
       Object.keys(data.models).map((modelId) => raw[modelId][name]),
     );
     blended[name] = values;
-    final[name] = withSurf(
+    wind[name] = windAt(data.wind, indexes);
+    const warning = windWarning(wind[name], settings.windWarning);
+    const conditions = withSurf(
       scaled(values, factorAt(buoy, hoursAheadOfWindow(window, date, nowKey), settings)),
       surfFactor,
       settings.surf,
     );
-    wind[name] = windAt(data.wind, indexes);
+    final[name] = { ...conditions, blownOut: isBlownOut(conditions.windChopShare, warning, profile) };
     if (heightSpreadFt !== null) spreadFt = Math.max(spreadFt ?? 0, heightSpreadFt);
 
     const slotScore = scoreConditions(final[name], profile);
@@ -129,7 +131,7 @@ function buildDay(data, date, dayIndex, settings, profile, nowKey, buoy, tropica
         (window.endHour - hourOf(nowKey)) * 60 < drive + settings.minSurfMinutes,
       final: final[name],
       wind: wind[name],
-      windWarning: windWarning(wind[name], settings.windWarning),
+      windWarning: warning,
       score: slotScore,
       rating: toRating(slotScore),
       spreadFt: heightSpreadFt,
