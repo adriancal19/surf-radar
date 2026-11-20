@@ -8,6 +8,7 @@
   --ocean-deep: #0a4f5c;
   --coral: #e8634a;
   --warning: #85560a;
+  --good: #2b6e46;
 
   --display: 'Fraunces', Georgia, 'Times New Roman', serif;
   --body: 'Figtree', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
@@ -236,6 +237,10 @@ main,
   font-size: 0.85rem;
 }
 
+.top-pick .wind-good {
+  color: #c8f0d4;
+}
+
 .top-pick .wind-warning {
   color: #fde8d0;
 }
@@ -301,6 +306,7 @@ main,
 }
 
 .wind-warning,
+.wind-good,
 .day-flag {
   display: flex;
   align-items: center;
@@ -313,6 +319,15 @@ main,
 
 .wind-warning-inline {
   color: var(--warning);
+  font-weight: 600;
+}
+
+.wind-good {
+  color: var(--good);
+}
+
+.wind-good-inline {
+  color: var(--good);
   font-weight: 600;
 }
 
@@ -462,6 +477,59 @@ main,
 
 .more-controls .controls {
   margin: 4px 0 0;
+}
+
+/* Track record */
+
+.track {
+  margin-top: 20px;
+  padding: 4px 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+}
+
+.track summary {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 44px;
+  color: var(--ocean-deep);
+  font-weight: 600;
+  cursor: pointer;
+  list-style: none;
+}
+
+.track summary::-webkit-details-marker {
+  display: none;
+}
+
+.track[open] {
+  padding-bottom: 12px;
+}
+
+.track-list {
+  display: grid;
+  gap: 8px;
+  margin: 10px 0;
+  padding: 0;
+  list-style: none;
+}
+
+.track-list li {
+  display: grid;
+  gap: 1px;
+}
+
+.track-lead {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.track-detail {
+  color: var(--muted);
+  font-size: 0.82rem;
 }
 
 /* Rating badge */

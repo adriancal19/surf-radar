@@ -1,40 +1,33 @@
-// Runs the steps in order: fetch → group into days → blend → correct → estimate surf → rate →
-// label confidence.
+// Runs the steps in order: fetch → estimate surf for each model and hour → group into days →
+// blend → correct → rate → label confidence.
 //
 // Each day keeps every stage so later phases can plug in without reshaping anything:
 //   raw       per-model values for each window
 //   blended   models combined
-//   final     blended, with heights adjusted by the nearest buoy, plus the surf estimate that
-//             gets rated
+//   final     blended, with heights adjusted by the nearest buoy. Includes the surf estimate
+//             that gets rated, and the wind's effect on it
 //   slots     one per time of day: final values, wind, score, rating, spread and confidence
 //   score     the whole day, weighted by the profile; rating is the rounded version
 //   flags     notes for that day, like a tropical system that could send swell
 
-import { blendReadings, blendValues } from './blend.js';
+import { averageDirection, blendReadings, blendValues, isDirectionField } from './blend.js';
 import { confidenceLabel } from './confidence.js';
 import { driveMinutes } from './filters.js';
 import { computeBias, correctionFactor, distanceKm, distanceStrength } from './correction.js';
 import { isBlownOut, scoreConditions, scoreDay, toRating } from './rating.js';
-import { withSurf } from './surf.js';
+import { addSurfSeries } from './surf.js';
 import { fetchBuoyData } from './sources/ndbc.js';
 import { fetchTropicalData, flagsForDay } from './sources/nhc.js';
 import { fetchMarine, fetchOpenMeteo } from './sources/open-meteo.js';
-import { windWarning } from './wind.js';
+import { windInfo } from './wind.js';
 
 const average = (values) => {
   const present = values.filter((value) => Number.isFinite(value));
   return present.length ? present.reduce((sum, value) => sum + value, 0) / present.length : null;
 };
 
-// Wind direction wraps around: the average of 350° and 10° is 0°, not 180°.
-export function averageDirection(degrees) {
-  const present = degrees.filter((value) => Number.isFinite(value));
-  if (!present.length) return null;
-  const toRadians = Math.PI / 180;
-  const x = present.reduce((sum, value) => sum + Math.cos(value * toRadians), 0);
-  const y = present.reduce((sum, value) => sum + Math.sin(value * toRadians), 0);
-  return ((Math.atan2(y, x) / toRadians) + 360) % 360;
-}
+// Kept here too, where the tests and older code look for it.
+export { averageDirection };
 
 // Times arrive as local strings like 2026-11-06T06:00, so no time zone math is needed.
 const dateOf = (time) => time.slice(0, 10);
@@ -54,7 +47,8 @@ function hourIndexes(times, date, window) {
 function readingsAt(modelSeries, indexes) {
   const reading = {};
   for (const [field, values] of Object.entries(modelSeries)) {
-    reading[field] = average(indexes.map((index) => values[index]));
+    const picked = indexes.map((index) => values[index]);
+    reading[field] = isDirectionField(field) ? averageDirection(picked) : average(picked);
   }
   return reading;
 }
@@ -80,8 +74,16 @@ function hoursAheadOfWindow(window, date, nowKey) {
   return Math.max(0, (localMs(date, middle) - localMs(dateOf(nowKey), nowHour)) / 3600000);
 }
 
-// The buoy correction scales every height together, so the swell and chop still add up.
-const HEIGHT_FIELDS = ['waveHeightFt', 'swellHeightFt', 'windWaveHeightFt'];
+// The buoy correction scales every height together, so the parts and the surf estimate
+// stay in step with the total.
+const HEIGHT_FIELDS = [
+  'waveHeightFt',
+  'windWaveHeightFt',
+  'swellHeightFt',
+  'secondarySwellHeightFt',
+  'tertiarySwellHeightFt',
+  'surfHeightFt',
+];
 
 function scaled(values, factor) {
   const result = { ...values };
@@ -91,7 +93,7 @@ function scaled(values, factor) {
   return result;
 }
 
-function buildDay(data, date, dayIndex, settings, profile, nowKey, buoy, tropical, drive, surfFactor) {
+function buildDay(data, date, dayIndex, settings, profile, nowKey, buoy, tropical, drive, facingDeg) {
   const raw = Object.fromEntries(Object.keys(data.models).map((modelId) => [modelId, {}]));
   const blended = {};
   const final = {};
@@ -110,13 +112,13 @@ function buildDay(data, date, dayIndex, settings, profile, nowKey, buoy, tropica
     );
     blended[name] = values;
     wind[name] = windAt(data.wind, indexes);
-    const warning = windWarning(wind[name], settings.windWarning);
-    const conditions = withSurf(
-      scaled(values, factorAt(buoy, hoursAheadOfWindow(window, date, nowKey), settings)),
-      surfFactor,
-      settings.surf,
-    );
-    final[name] = { ...conditions, blownOut: isBlownOut(conditions.windChopShare, warning, profile) };
+    const windFeel = windInfo(wind[name], facingDeg, settings.wind);
+    const conditions = scaled(values, factorAt(buoy, hoursAheadOfWindow(window, date, nowKey), settings));
+    final[name] = {
+      ...conditions,
+      windEffect: windFeel?.effect ?? 0,
+      blownOut: isBlownOut(conditions.windChopShare, windFeel?.effect ?? 0, profile),
+    };
     if (heightSpreadFt !== null) spreadFt = Math.max(spreadFt ?? 0, heightSpreadFt);
 
     const slotScore = scoreConditions(final[name], profile);
@@ -131,7 +133,9 @@ function buildDay(data, date, dayIndex, settings, profile, nowKey, buoy, tropica
         (window.endHour - hourOf(nowKey)) * 60 < drive + settings.minSurfMinutes,
       final: final[name],
       wind: wind[name],
-      windWarning: warning,
+      windKind: windFeel?.kind ?? null,
+      windWarning: windFeel?.warning ?? null,
+      windGood: windFeel?.good ?? null,
       score: slotScore,
       rating: toRating(slotScore),
       spreadFt: heightSpreadFt,
@@ -156,15 +160,16 @@ function buildDay(data, date, dayIndex, settings, profile, nowKey, buoy, tropica
   };
 }
 
-function buildNow(data, nowKey, buoy, settings, surfFactor) {
+function buildNow(data, nowKey, buoy, settings, facingDeg) {
   const index = data.times.indexOf(nowKey);
   if (index === -1) return null;
   const readings = Object.values(data.models).map((series) => readingsAt(series, [index]));
   const { heightSpreadFt, ...values } = blendReadings(readings);
   return {
     time: nowKey,
-    ...withSurf(scaled(values, factorAt(buoy, 0, settings)), surfFactor, settings.surf),
+    ...scaled(values, factorAt(buoy, 0, settings)),
     wind: windAt(data.wind, [index]),
+    windKind: windInfo(windAt(data.wind, [index]), facingDeg, settings.wind)?.kind ?? null,
   };
 }
 
@@ -199,15 +204,21 @@ export function buildSpotForecast(spot, data, settings, nowKey, buoyStatus = nul
   const dates = [...new Set(data.times.map(dateOf))];
   const buoy = buoyForSpot(spot, buoyStatus, settings);
   const drive = driveMinutes(spot, profile.home) ?? 0;
-  // A spot without its own factor is treated as fully open.
-  const surfFactor = spot.surfFactor ?? 1;
+  // A spot without its own factor is treated as fully open, facing due east.
+  const facingDeg = spot.facingDeg ?? 90;
+  // Surf is estimated for each model and hour first, from that model's own wave parts, then
+  // blended like everything else.
+  const withSurf = {
+    ...data,
+    models: addSurfSeries(data.models, { surfFactor: spot.surfFactor ?? 1, facingDeg }, settings.surf),
+  };
   return {
     ...spot,
     buoy,
     nowFactor: factorAt(buoy, 0, settings),
-    now: buildNow(data, nowKey, buoy, settings, surfFactor),
+    now: buildNow(withSurf, nowKey, buoy, settings, facingDeg),
     days: dates.map((date, dayIndex) =>
-      buildDay(data, date, dayIndex, settings, profile, nowKey, buoy, tropical, drive, surfFactor),
+      buildDay(withSurf, date, dayIndex, settings, profile, nowKey, buoy, tropical, drive, facingDeg),
     ),
   };
 }

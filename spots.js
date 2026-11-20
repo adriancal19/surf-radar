@@ -14,12 +14,17 @@
 // times ran long (4 hr to Cocoa Beach, against about 3 hr in practice), so these use:
 // 15 minutes + road miles × 0.817, which gives 3 hr for Cocoa's 202 miles.
 //
-// surfFactor is how much of the offshore height reaches this beach as surf, before the period
-// factor in settings.js. It's mostly down to the Bahamas blocking swell further south, and how
-// wide the shallow shelf is. Two are checked against cams on 2026-11-17: South Beach (0.45) and
-// Jupiter (0.75, matching the Juno Beach Pier cams). Spots between them follow a straight line
-// by latitude. North of Jupiter they're starting guesses from exposure; Sebastian's jetty
-// focuses swell.
+// surfFactor is how much of the offshore swell reaches this beach as surf, after the period
+// and direction factors in src/surf.js. It's mostly down to how wide the shallow shelf is.
+// Two are checked against cams on 2026-11-17: South Beach (0.48) and Jupiter (0.70, matching
+// the Juno Beach Pier cams). Spots between them follow a straight line by latitude. North of
+// Jupiter they're starting guesses from exposure, kept in step with Jupiter; Sebastian's
+// jetty focuses swell.
+//
+// facingDeg is the compass direction straight out to sea from the beach, worked out from the
+// shoreline between neighboring spots. It decides which swells hit the beach squarely and
+// which way the wind blows relative to it: the Space Coast faces east-northeast, and from
+// Lake Worth south the coast faces due east.
 //
 // beach is the shore itself, used to draw the map.
 //
@@ -34,7 +39,8 @@ export const spots = [
     lat: 28.32,
     lon: -80.59,
     buoyId: '41113',
-    surfFactor: 0.7,
+    surfFactor: 0.66,
+    facingDeg: 80,
     driveMinutes: { doral: 180 },
     cams: [
       { label: 'Cocoa Beach Pier (East Coast Cams)', url: 'https://www.eastcoastcams.com/florida/cocoa-beach/cocoa-beach-pier/' },
@@ -48,7 +54,8 @@ export const spots = [
     lat: 28.042,
     lon: -80.458,
     buoyId: '41113',
-    surfFactor: 0.7,
+    surfFactor: 0.66,
+    facingDeg: 75,
     driveMinutes: { doral: 165 },
     cams: [{ label: 'Indialantic Boardwalk (Visit Space Coast)', url: 'https://www.visitspacecoast.com/blog/indialantic-boardwalk-surf-cam/' }],
   },
@@ -59,7 +66,8 @@ export const spots = [
     lat: 27.86,
     lon: -80.43,
     buoyId: '41114',
-    surfFactor: 0.8,
+    surfFactor: 0.75,
+    facingDeg: 65,
     driveMinutes: { doral: 148 },
     cams: [
       { label: 'Sebastian Inlet (Inlet District)', url: 'https://www.sebastianinletcam.com/' },
@@ -73,7 +81,8 @@ export const spots = [
     lat: 27.65,
     lon: -80.34,
     buoyId: '41114',
-    surfFactor: 0.7,
+    surfFactor: 0.66,
+    facingDeg: 70,
     driveMinutes: { doral: 134 },
     cams: [{ label: 'Vero Beach cams (Visit Indian River County)', url: 'https://visitindianrivercounty.com/discover/on-the-water/' }],
   },
@@ -84,7 +93,8 @@ export const spots = [
     lat: 27.458,
     lon: -80.208,
     buoyId: '41114',
-    surfFactor: 0.7,
+    surfFactor: 0.66,
+    facingDeg: 70,
     driveMinutes: { doral: 126 },
     cams: [{ label: 'Fort Pierce inlet, surf and jetty (Visit St. Lucie)', url: 'https://visitstlucie.com/live-web-cams/' }],
   },
@@ -95,7 +105,8 @@ export const spots = [
     lat: 27.208,
     lon: -80.125,
     buoyId: '41114',
-    surfFactor: 0.75,
+    surfFactor: 0.7,
+    facingDeg: 70,
     driveMinutes: { doral: 113 },
     cams: [{ label: 'Jensen Beach and Bathtub Beach (Hutchinson Island)', url: 'https://floridashutchinsonisland.com/Hutchinson-island-Beaches-Webcam.html' }],
   },
@@ -106,7 +117,8 @@ export const spots = [
     lat: 26.958,
     lon: -79.958,
     buoyId: '41114',
-    surfFactor: 0.75,
+    surfFactor: 0.7,
+    facingDeg: 75,
     driveMinutes: { doral: 94 },
     cams: [
       { label: 'Jupiter Inlet and beach (Jupiter Daily)', url: 'https://www.jupiterdaily.com/all-jupiter-fl-live-cams/' },
@@ -120,7 +132,8 @@ export const spots = [
     lat: 26.708,
     lon: -79.958,
     buoyId: '41122',
-    surfFactor: 0.7,
+    surfFactor: 0.65,
+    facingDeg: 85,
     driveMinutes: { doral: 80 },
     cams: [{ label: 'Palm Beach cams (The Palm Beaches)', url: 'https://www.thepalmbeaches.com/beachcam' }],
   },
@@ -131,7 +144,8 @@ export const spots = [
     lat: 26.61,
     lon: -80.02,
     buoyId: '41122',
-    surfFactor: 0.68,
+    surfFactor: 0.64,
+    facingDeg: 95,
     driveMinutes: { doral: 75 },
     cams: [{ label: 'Lake Worth Pier North (East Coast Cams)', url: 'https://www.eastcoastcams.com/florida/lake-worth/lake-worth-pier-north/' }],
   },
@@ -142,7 +156,8 @@ export const spots = [
     lat: 26.46,
     lon: -80.05,
     buoyId: '41122',
-    surfFactor: 0.64,
+    surfFactor: 0.61,
+    facingDeg: 95,
     driveMinutes: { doral: 65 },
     cams: [{ label: 'Delray Beach cams (The Palm Beaches)', url: 'https://www.thepalmbeaches.com/beachcam' }],
   },
@@ -153,7 +168,8 @@ export const spots = [
     lat: 26.375,
     lon: -79.958,
     buoyId: '41122',
-    surfFactor: 0.6,
+    surfFactor: 0.59,
+    facingDeg: 95,
     driveMinutes: { doral: 59 },
     cams: [{ label: 'Boca Raton cams (Live Beaches)', url: 'https://www.livebeaches.com/city/boca-raton-fl/' }],
   },
@@ -164,7 +180,8 @@ export const spots = [
     lat: 26.292,
     lon: -79.958,
     buoyId: '41122',
-    surfFactor: 0.6,
+    surfFactor: 0.58,
+    facingDeg: 100,
     driveMinutes: { doral: 58 },
     cams: [{ label: 'Deerfield Beach (SkylineWebcams)', url: 'https://www.skylinewebcams.com/en/webcam/united-states/florida/deerfield-beach/deerfield-beach.html' }],
   },
@@ -175,7 +192,8 @@ export const spots = [
     lat: 26.208,
     lon: -79.958,
     buoyId: '41122',
-    surfFactor: 0.57,
+    surfFactor: 0.56,
+    facingDeg: 95,
     driveMinutes: { doral: 53 },
     cams: [{ label: 'Pompano Beach Pier (Visit Pompano Beach)', url: 'https://www.visitpompanobeach.com/webcams/' }],
   },
@@ -187,6 +205,7 @@ export const spots = [
     lon: -79.958,
     buoyId: '41122',
     surfFactor: 0.54,
+    facingDeg: 95,
     driveMinutes: { doral: 47 },
     cams: [{ label: 'Fort Lauderdale Beach (SkylineWebcams)', url: 'https://www.skylinewebcams.com/webcam/united-states/florida/fort-lauderdale/beach.html' }],
   },
@@ -197,7 +216,8 @@ export const spots = [
     lat: 26.01,
     lon: -80.1,
     buoyId: '41122',
-    surfFactor: 0.51,
+    surfFactor: 0.52,
+    facingDeg: 95,
     driveMinutes: { doral: 37 },
     cams: [{ label: 'Hollywood Beach Broadwalk (YouTube)', url: 'https://www.youtube.com/live/cmkAbDUEoyA' }],
   },
@@ -208,7 +228,8 @@ export const spots = [
     lat: 25.9,
     lon: -80.11,
     buoyId: '41122',
-    surfFactor: 0.48,
+    surfFactor: 0.5,
+    facingDeg: 95,
     driveMinutes: { doral: 33 },
     cams: [{ label: 'Haulover Inlet (Salty Forecast)', url: 'https://saltyforecast.com/cams/haulover-inlet-cam' }],
   },
@@ -219,7 +240,8 @@ export const spots = [
     lat: 25.78,
     lon: -80.115,
     buoyId: '41122',
-    surfFactor: 0.45,
+    surfFactor: 0.48,
+    facingDeg: 95,
     driveMinutes: { doral: 29 },
     cams: [
       { label: 'South Beach (SkylineWebcams)', url: 'https://www.skylinewebcams.com/en/webcam/united-states/florida/miami/south-beach.html' },

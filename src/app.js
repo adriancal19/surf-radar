@@ -28,6 +28,9 @@ import {
 import { icon } from './icons.js';
 import { landPath, layoutPins, MAP_HEIGHT, MAP_WIDTH, toX, toY } from './map.js';
 import { loadForecast } from './pipeline.js';
+import { fetchBuoyData } from './sources/ndbc.js';
+import { fetchPreviousRuns } from './sources/open-meteo.js';
+import { forecastByDay, previousRunFields, trackRecord } from './track.js';
 import { ratingLabel } from './rating.js';
 import { bodyLabel, chopNote, surfRange } from './surf.js';
 
@@ -71,25 +74,35 @@ const formatSurf = (final) => surfRange(final?.surfHeightFt) ?? MISSING;
 const formatBody = (final) => bodyLabel(final?.surfHeightFt) ?? MISSING;
 
 // The small print: "7.0 ft offshore at 6.0 s · mostly wind chop".
+// " at 6.0 s from NE", or as much of it as is known.
+function periodAndDirection(periodS, directionDeg) {
+  const period = Number.isFinite(periodS) && periodS > 0 ? ` at ${formatPeriod(periodS)}` : '';
+  const from = Number.isFinite(directionDeg) ? ` from ${compass(directionDeg)}` : '';
+  return `${period}${from}`;
+}
+
 function offshoreNote(final) {
   if (!Number.isFinite(final?.waveHeightFt)) return '';
-  const period = Number.isFinite(final.wavePeriodS) ? ` at ${formatPeriod(final.wavePeriodS)}` : '';
   const makeup = chopNote(final.windChopShare);
-  return `${formatFt(final.waveHeightFt)} offshore${period}${makeup ? ` · ${makeup}` : ''}`;
+  return `${formatFt(final.waveHeightFt)} offshore${periodAndDirection(final.wavePeriodS, final.waveDirectionDeg)}${makeup ? ` · ${makeup}` : ''}`;
 }
 
 // The full makeup, for the spot page:
-// "7.0 ft offshore at 6.0 s: swell 2.0 ft at 9.0 s + chop 6.5 ft at 5.0 s".
+// "7.0 ft offshore at 6.0 s from NE: swell 2.0 ft at 9.0 s from NE + chop 6.5 ft at 5.0 s from E".
+// Parts under half a foot, like ripples from a light breeze, are left out as noise.
 function makeupNote(final) {
-  const part = (label, height, period) =>
-    Number.isFinite(height) ? `${label} ${formatFt(height)}${Number.isFinite(period) ? ` at ${formatPeriod(period)}` : ''}` : null;
+  const part = (label, prefix) => {
+    const height = final?.[`${prefix}HeightFt`];
+    if (!Number.isFinite(height) || height < 0.5) return null;
+    return `${label} ${formatFt(height)}${periodAndDirection(final[`${prefix}PeriodS`], final[`${prefix}DirectionDeg`])}`;
+  };
   const parts = [
-    part('swell', final?.swellHeightFt, final?.swellPeriodS),
-    part('chop', final?.windWaveHeightFt, final?.windWavePeriodS),
+    part('swell', 'swell'),
+    part('2nd swell', 'secondarySwell'),
+    part('chop', 'windWave'),
   ].filter(Boolean);
   if (!parts.length) return offshoreNote(final);
-  const period = Number.isFinite(final.wavePeriodS) ? ` at ${formatPeriod(final.wavePeriodS)}` : '';
-  return `${formatFt(final.waveHeightFt)} offshore${period}: ${parts.join(' + ')}`;
+  return `${formatFt(final.waveHeightFt)} offshore${periodAndDirection(final.wavePeriodS, final.waveDirectionDeg)}: ${parts.join(' + ')}`;
 }
 
 function compass(degrees) {
@@ -97,10 +110,12 @@ function compass(degrees) {
   return names[Math.round(degrees / 45) % 8];
 }
 
-function formatWind({ speedMph, directionDeg }) {
+// "E 14 mph onshore". The kind is relative to the beach, so it's only added where it's known.
+function formatWind({ speedMph, directionDeg }, kind = null) {
   if (!Number.isFinite(speedMph)) return MISSING;
   const direction = Number.isFinite(directionDeg) ? `${compass(directionDeg)} ` : '';
-  return `${direction}${Math.round(speedMph)} mph`;
+  const relative = kind && kind !== 'light' ? ` ${kind}` : '';
+  return `${direction}${Math.round(speedMph)} mph${relative}`;
 }
 
 // Noon UTC keeps the date from sliding a day when formatted.
@@ -151,8 +166,18 @@ const unsureNote = (slot) => (slot.confidence === LOW ? ' (unsure)' : '');
 const windText = (slot) =>
   slot.final?.blownOut ? `Blown out: ${slot.windWarning.split(',')[0].toLowerCase()}` : slot.windWarning;
 
-const windNote = (slot) =>
-  slot.windWarning ? `<span class="wind-warning">${icon('wind', 14)} ${windText(slot)}</span>` : '';
+// Wind that hurts gets a warning; wind that helps gets a good note in green.
+function windNote(slot) {
+  if (slot.windWarning) return `<span class="wind-warning">${icon('wind', 14)} ${windText(slot)}</span>`;
+  if (slot.windGood) return `<span class="wind-good">${icon('wind', 14)} ${slot.windGood}</span>`;
+  return '';
+}
+
+function windInline(slot) {
+  if (slot.windWarning) return ` · <span class="wind-warning-inline">${windText(slot)}</span>`;
+  if (slot.windGood) return ` · <span class="wind-good-inline">${slot.windGood}</span>`;
+  return '';
+}
 
 // "this morning", "midday today" or "Sat evening".
 function whenWithTime(day, slot) {
@@ -337,7 +362,11 @@ function renderControls() {
       </div>
     </div>
     <p class="intro" id="list-summary" aria-live="polite"></p>
-    <div id="spot-results"></div>`;
+    <div id="spot-results"></div>
+    <details class="track" id="track">
+      <summary>${icon('buoy', 18)}<span>How accurate is it?</span></summary>
+      <div id="track-body"><p class="intro">Loading the last month of forecasts…</p></div>
+    </details>`;
 }
 
 function renderSpotRow(spot) {
@@ -507,7 +536,7 @@ function renderNow(spot) {
       <dl>
         ${stat('wave', 'Surf', formatSurf(spot.now))}
         ${stat('timer', 'Body height', formatBody(spot.now))}
-        ${stat('wind', 'Wind', formatWind(spot.now.wind))}
+        ${stat('wind', 'Wind', formatWind(spot.now.wind, spot.now.windKind))}
       </dl>
       <p class="buoy-note">${makeupNote(spot.now)}</p>
     </section>`;
@@ -554,7 +583,7 @@ function renderWindowLine(slot) {
   return `
     <li>
       ${icon(TIME_ICONS[slot.name], 15)}
-      <span><strong>${label}:</strong> rated ${slot.rating ?? MISSING} · ${formatSurf(slot.final)}, ${formatBody(slot.final).toLowerCase()} · ${formatWind(slot.wind)}${slot.windWarning ? ` · <span class="wind-warning-inline">${windText(slot)}</span>` : ''}
+      <span><strong>${label}:</strong> rated ${slot.rating ?? MISSING} · ${formatSurf(slot.final)}, ${formatBody(slot.final).toLowerCase()} · ${formatWind(slot.wind, slot.windKind)}${windInline(slot)}
         <span class="window-small">${makeupNote(slot.final)}</span></span>
     </li>`;
 }
@@ -584,7 +613,7 @@ function renderDay(day) {
             </span>
             <span class="row-line row-detail">
               <span>${slot.confidence}${timeNote}</span>
-              <span class="row-value">${formatBody(slot.final)} · ${formatWind(slot.wind)}</span>
+              <span class="row-value">${formatBody(slot.final)} · ${formatWind(slot.wind, slot.windKind)}</span>
             </span>
             ${windNote(slot)}
             ${day.flags.map((flag) => `<span class="day-flag">${icon('storm', 14)} ${escapeHtml(flag.text)}</span>`).join('')}
@@ -613,7 +642,7 @@ function renderSpot(spot) {
     <section>
       <h2>${icon('sun', 18)} Day by day</h2>
       <div class="controls">${timeRow()}</div>
-      <p class="intro">Tap a day to compare morning, midday and evening. Wind only lowers the rating when it blows the surf out.</p>
+      <p class="intro">Tap a day to compare morning, midday and evening. Offshore or light wind lifts the rating a little; onshore wind lowers it.</p>
       <ol class="day-list" id="day-list">${spot.days.map(renderDay).join('')}</ol>
     </section>`;
   updateChips();
@@ -646,6 +675,80 @@ function refresh() {
 }
 
 // The controls get redrawn with each view, so listen on the container that stays put.
+// ---- Track record ----
+
+// "ran 0.3 ft high", "ran 0.2 ft low" or "no lean either way".
+function leanText(biasFt) {
+  if (Math.abs(biasFt) < 0.1) return 'no lean either way';
+  return `ran ${Math.abs(biasFt).toFixed(1)} ft ${biasFt > 0 ? 'high' : 'low'}`;
+}
+
+function renderTrack(rows) {
+  const counted = rows.filter((row) => row.days > 0);
+  if (!counted.length) return '<p class="intro">Not enough buoy readings yet to score the forecast.</p>';
+  const items = counted
+    .map(
+      ({ lead, missFt, biasFt, days }) => `
+        <li>
+          <span class="track-lead">${lead} ${lead === 1 ? 'day' : 'days'} ahead</span>
+          <strong>off by ${missFt.toFixed(1)} ft</strong>
+          <span class="track-detail">on average, ${leanText(biasFt)} · ${days} buoy days</span>
+        </li>`,
+    )
+    .join('');
+  return `
+    <p class="intro">How far off the offshore wave forecast was against what NOAA's ${buoys.length} buoys measured, by day, over the last month. These are the forecasts the models really made back then, not hindsight.</p>
+    <ul class="track-list">${items}</ul>
+    <p class="intro">This checks the waves offshore. The surf at the beach is estimated from them, and that estimate is checked against beach cams.</p>`;
+}
+
+// Kept once loaded, since the section is redrawn with the list.
+let trackHtml = null;
+let trackLoading = false;
+
+async function loadTrack() {
+  const body = document.querySelector('#track-body');
+  if (trackHtml) {
+    body.innerHTML = trackHtml;
+    return;
+  }
+  if (trackLoading) return;
+  trackLoading = true;
+  try {
+    const modelIds = settings.models.map((model) => model.id);
+    const [saved, previous] = await Promise.all([
+      fetchBuoyData(settings.buoyCorrection.dataUrl),
+      fetchPreviousRuns(buoys, settings, previousRunFields()),
+    ]);
+    if (!saved?.stations) throw new Error('No buoy data');
+    const pairs = buoys.map((buoy, index) => ({
+      forecast: forecastByDay(previous[index].hourly, modelIds),
+      measured: saved.stations[buoy.id]?.daily,
+    }));
+    const today = forecast?.[0]?.days[0]?.date ?? new Date().toISOString().slice(0, 10);
+    trackHtml = renderTrack(trackRecord(pairs, today));
+  } catch (error) {
+    console.warn('Track record unavailable:', error);
+  } finally {
+    trackLoading = false;
+  }
+  // The list may have been redrawn while this loaded, so look the section up again.
+  const current = document.querySelector('#track-body');
+  if (current) {
+    current.innerHTML =
+      trackHtml ?? '<p class="intro">Couldn\'t load the track record right now. Close this and open it again to retry.</p>';
+  }
+}
+
+// Only fetched when someone opens it, so it costs nothing otherwise.
+main.addEventListener(
+  'toggle',
+  (event) => {
+    if (event.target.id === 'track' && event.target.open) loadTrack();
+  },
+  true,
+);
+
 main.addEventListener('click', (event) => {
   const button = event.target.closest('.chip');
   if (!button) return;

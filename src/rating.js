@@ -16,23 +16,26 @@ export function interpolate(points, x) {
   return points[points.length - 1][1];
 }
 
-// Mostly wind chop with a wind warning on top. Unknown makeup never counts as blown out.
-export function isBlownOut(windChopShare, windWarning, profile) {
-  return Boolean(windWarning) && Number.isFinite(windChopShare) && windChopShare >= profile.blownOut.minChopShare;
+// Mostly wind chop with onshore or strong wind on top. Unknown makeup never counts.
+export function isBlownOut(windChopShare, windEffect, profile) {
+  const { minChopShare, maxWindEffect } = profile.blownOut;
+  return Number.isFinite(windChopShare) && windChopShare >= minChopShare && windEffect <= maxWindEffect;
 }
 
-// Score for one window of conditions, from the estimated surf at the beach plus a nudge for
-// how clean it is. Period isn't scored again: it's already in the surf estimate. A blown-out
-// window is capped, however big. Returns null if there's no surf estimate.
-export function scoreConditions({ surfHeightFt, windChopShare, blownOut = false }, profile) {
+// Score for one window of conditions, from the estimated surf at the beach plus nudges for
+// how clean the sea is and what the wind is doing. Period isn't scored again: it's already in
+// the surf estimate. A blown-out window is capped, however big. Returns null if there's no
+// surf estimate.
+export function scoreConditions({ surfHeightFt, windChopShare, windEffect = 0, blownOut = false }, profile) {
   if (!Number.isFinite(surfHeightFt)) return null;
   if (surfHeightFt < profile.minSurfFt) return MIN_SCORE;
 
   const size = interpolate(profile.sizeCurve, surfHeightFt);
   // Unknown makeup leaves the score alone rather than counting as clean or choppy.
   const clean = Number.isFinite(windChopShare) ? interpolate(profile.chopCurve, windChopShare) : 0;
+  const nudge = Math.min(profile.maxBonus, clean + windEffect);
   const ceiling = blownOut ? profile.blownOut.maxScore : MAX_SCORE;
-  return Math.min(ceiling, Math.max(MIN_SCORE, size + clean));
+  return Math.min(ceiling, Math.max(MIN_SCORE, size + nudge));
 }
 
 // Scores each window separately, then combines them by weight. If a window has no data,

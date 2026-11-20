@@ -18,10 +18,11 @@ I don't get to surf often, so a wasted trip costs me a lot. I wanted something t
 
 - **Names the best time to go**, based on when you're free, how far ahead you're looking (or the exact days you pick) and how far you'll drive.
 - **Estimates the surf at the beach**, not just the offshore number, and shows it as a range and a body height like "2–3 ft · Waist high".
-- **Rates each spot from 1 to 5** for morning, midday and evening, from that surf estimate and how clean or choppy the sea is.
+- **Rates each spot from 1 to 5** for morning, midday and evening, from that surf estimate, how clean or choppy the sea is, and whether the wind is offshore, cross-shore or onshore at that beach.
 - **Labels its confidence**, based on how far ahead the day is and how much the forecast models disagree.
 - **Checks against live buoys**, showing what the nearest buoy is measuring next to the forecast.
-- **Warns about wind** that could spoil a session, caps the rating when it's blown out, and flags tropical systems that could send swell.
+- **Judges the wind against each beach**, noting clean offshore days, warning about onshore ones, and capping the rating when it's blown out. Also flags tropical systems that could send swell.
+- **Shows its track record**: how far off its 1-, 3- and 5-day forecasts were against NOAA buoys over the last month.
 - **Sends a daily email** when a spot is forecast at 4 or higher three days out.
 - **Links to free public cams** so you can see the conditions before leaving.
 
@@ -60,13 +61,18 @@ There's no server. The site is plain HTML, CSS and JavaScript on GitHub Pages, a
 
 **Separating offshore from the beach.** The models report wave height 12–22 km offshore. On a day they read 6–8 ft, the South Beach cam showed about 2–3 ft of choppy surf. Each spot now has a fixed factor for how much swell reaches it (the Bahamas block more the further south you go), multiplied by a factor that grows with wave period, since longer-period waves lose less crossing the shelf. Period is counted only there, not again in the rating, which instead gets a nudge for how much of the sea is wind chop rather than clean swell. Cams at Juno Beach Pier then showed head-high-plus surf that was completely blown out, still rated 4, so chop now weighs more than clean swell, and a day that's mostly chop with onshore or strong wind is capped at 2 however big it is. Jupiter matched those cams, so the spots between Jupiter and South Beach now follow a straight line between the two checked factors.
 
+**Using swell direction.** The models split the sea into wind chop and up to three swells, each with its own height, period and direction. Each part now becomes surf on its own, counted in full when it's aimed straight at the beach, less at an angle, and not at all when it runs along the coast or out to sea, and the parts combine by energy. One model reports parts that aren't there as 0 ft, which dragged down the averages until those were treated as missing. The Bahamas aren't modeled on top: the forecast points sit between Florida and the islands, so the models already include their shadow. The two cam-checked spots were recalibrated on the real Nov 17 forecast so the new math still matches what the cams showed.
+
+**Checking itself.** Open-Meteo keeps the forecasts each model made 1, 3 and 5 days before every hour of the last month, and NOAA keeps about 45 days of buoy readings. Comparing the two shows the offshore forecast typically missing by under a foot a day or three out, and running about half a foot high. That only checks the offshore part; the beach estimate is still checked against cams.
+
 **Recommending only what's reachable.** An early version suggested a spot "this evening" at 3:30 pm, even though the drive would end around sunset. Today's times now count only if you could get there with 90 minutes left to surf.
 
 **Cutting a feature.** I planned a session log to calibrate ratings against real trips. Since it needs regular sessions per spot to mean anything, and I rarely go, I skipped it and built the "best time to go" answer and cam links instead.
 
 ## Known limitations
 
-- **Surf heights are estimates.** They come from offshore models, usually 12–22 km out, scaled by per-spot and period factors that are starting guesses. Only South Beach and Jupiter have been checked against cams so far. The spot factors also ignore swell direction, so they likely undersell South Florida on northeast swells.
+- **Surf heights are estimates.** They come from offshore models, usually 12–22 km out, scaled by period, direction and per-spot factors that are starting guesses. Only South Beach and Jupiter have been checked against cams so far.
+- **Wind effects are starting guesses** too, and the free wind data has a daily limit per visitor.
 - **Ratings aren't fully tuned yet.** They rest on my starting preferences and need checking against more real sessions.
 - **Drive times are estimates** without traffic, calibrated to a single real-world trip.
 - **Cam links can go stale**, because they point to other people's sites. Each spot also has a live YouTube search as a fallback.
@@ -80,7 +86,10 @@ spots.js, buoys.js           spots, buoys, drive times and cam links
 src/pipeline.js              runs fetch → blend → correct → rate → label
 src/blend.js                 combines models and measures disagreement
 src/correction.js            live buoy correction
+src/surf.js                  offshore forecast → surf at the beach
+src/wind.js                  offshore, cross-shore or onshore at each beach
 src/rating.js                the 1–5 score
+src/track.js                 the track record against NOAA buoys
 src/confidence.js            confidence labels
 src/filters.js               sorting, filters and the best time to go
 src/alerts.js                what to email and what it says
