@@ -17,13 +17,27 @@ export function blendValues(values) {
   };
 }
 
+// Directions wrap around: the average of 350° and 10° is 0°, not 180°.
+export function averageDirection(degrees) {
+  const present = degrees.filter((value) => Number.isFinite(value));
+  if (!present.length) return null;
+  const toRadians = Math.PI / 180;
+  const x = present.reduce((sum, value) => sum + Math.cos(value * toRadians), 0);
+  const y = present.reduce((sum, value) => sum + Math.sin(value * toRadians), 0);
+  return ((Math.atan2(y, x) / toRadians) + 360) % 360;
+}
+
+export const isDirectionField = (field) => field.endsWith('DirectionDeg');
+
 // Takes one set of readings per model, e.g. [{ waveHeightFt: 3, swellPeriodS: 8 }, ...],
-// and returns one blended set plus the spread in wave height.
+// and returns one blended set plus the spread in wave height. Directions are averaged
+// around the compass; everything else takes the middle value.
 export function blendReadings(readings) {
   const fields = [...new Set(readings.flatMap((reading) => Object.keys(reading)))];
   const blended = {};
   for (const field of fields) {
-    blended[field] = blendValues(readings.map((reading) => reading[field])).value;
+    const values = readings.map((reading) => reading[field]);
+    blended[field] = isDirectionField(field) ? averageDirection(values) : blendValues(values).value;
   }
   blended.heightSpreadFt = blendValues(readings.map((reading) => reading.waveHeightFt)).spread;
   return blended;

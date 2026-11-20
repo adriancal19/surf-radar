@@ -40,15 +40,27 @@ export const settings = {
     ],
   },
 
-  // Starting guesses for when to warn about wind. On its own it doesn't change the rating;
-  // with mostly wind chop it caps it (see blownOut).
-  windWarning: {
-    // Wind from this range of compass directions blows onshore.
-    onshoreFromDeg: 30,
-    onshoreToDeg: 150,
-    onshoreMph: 12,
-    // Windy enough to mention from any direction.
+  // Wind, judged against the way each beach faces (facingDeg in spots.js). Each kind adds its
+  // effect to the rating. Starting guesses.
+  wind: {
+    // Under this, wind counts as light from any direction.
+    lightMph: 6,
+    breezyMph: 12,
     strongMph: 20,
+    // Within this many degrees of straight onshore counts as onshore, and the same for
+    // offshore. In between is cross-shore.
+    sideDeg: 60,
+    effects: {
+      light: 0.5,
+      offshore: 0.5,
+      offshoreStrong: 0,
+      cross: 0,
+      crossBreezy: -0.5,
+      crossStrong: -1,
+      onshore: -0.5,
+      onshoreBreezy: -1,
+      onshoreStrong: -1.5,
+    },
   },
 
   // Tropical flags. See src/sources/nhc.js.
@@ -112,20 +124,27 @@ export const settings = {
         [6, 5],
       ],
 
-      // [share of the sea that's wind chop, points added]. Lopsided on purpose: chop spoils a
-      // day more than clean swell improves one. In between scales along the line.
+      // [share of the surf that's wind chop, points added]. Lopsided on purpose: chop spoils a
+      // day more than clean swell improves one. In between scales along the line. The wind
+      // itself is counted separately (see wind), so this is a little gentler.
       chopCurve: [
         [0.3, 0.5],
         [0.5, 0],
-        [0.7, -1],
-        [0.85, -1.5],
+        [0.7, -0.5],
+        [0.85, -1],
       ],
 
-      // Blown out: mostly chop with a wind warning on top. Size doesn't make up for it, so the
-      // score can't go above maxScore however big it is. Checked against the Juno Beach Pier
-      // cams on 2026-11-17: head high and overhead, but no lines.
+      // Clean swell and good wind together can lift a day by this much at most, so a clean,
+      // glassy waist-high day is Good rather than Great.
+      maxBonus: 0.5,
+
+      // Blown out: mostly chop with onshore or strong wind on top (a wind effect of
+      // maxWindEffect or worse). Size doesn't make up for it, so the score can't go above
+      // maxScore however big it is. Checked against the Juno Beach Pier cams on 2026-11-17:
+      // head high and overhead, but no lines.
       blownOut: {
         minChopShare: 0.65,
+        maxWindEffect: -1,
         maxScore: 2,
       },
 

@@ -2,7 +2,7 @@
 //
 //   {
 //     times: ['2026-11-06T00:00', ...],
-//     models: { meteofrance_wave: { waveHeightFt: [...], wavePeriodS: [...], swellHeightFt: [...], ... } },
+//     models: { meteofrance_wave: { waveHeightFt: [...], wavePeriodS: [...], swellDirectionDeg: [...], ... } },
 //     wind: { speedMph: [...], directionDeg: [...] } or null if wind couldn't be loaded,
 //   }
 //
@@ -12,16 +12,23 @@
 const MARINE_URL = 'https://marine-api.open-meteo.com/v1/marine';
 const WEATHER_URL = 'https://api.open-meteo.com/v1/forecast';
 
-// waveHeightFt and wavePeriodS cover the whole sea, offshore. Swell and wind chop are its two
-// parts, used for the clean-or-choppy nudge and the small print.
-const MARINE_FIELDS = {
-  waveHeightFt: 'wave_height',
-  wavePeriodS: 'wave_period',
-  swellHeightFt: 'swell_wave_height',
-  swellPeriodS: 'swell_wave_period',
-  windWaveHeightFt: 'wind_wave_height',
-  windWavePeriodS: 'wind_wave_period',
+// The whole sea, then its parts: wind chop and up to three swells. Directions are where the
+// waves come from. Not every model splits the sea; ECMWF gives only the totals, and the
+// others report an absent part as 0 ft.
+const PARTS = {
+  wave: 'wave',
+  windWave: 'wind_wave',
+  swell: 'swell_wave',
+  secondarySwell: 'secondary_swell_wave',
+  tertiarySwell: 'tertiary_swell_wave',
 };
+const MARINE_FIELDS = Object.fromEntries(
+  Object.entries(PARTS).flatMap(([prefix, api]) => [
+    [`${prefix}HeightFt`, `${api}_height`],
+    [`${prefix}PeriodS`, `${api}_period`],
+    [`${prefix}DirectionDeg`, `${api}_direction`],
+  ]),
+);
 
 function locationParams(spots, settings) {
   return {
@@ -53,6 +60,15 @@ export function parseMarineLocation(location, modelIds) {
     for (const [name, apiField] of Object.entries(MARINE_FIELDS)) {
       const key = modelIds.length === 1 ? apiField : `${apiField}_${modelId}`;
       models[modelId][name] = hourly[key] ?? hourly.time.map(() => null);
+    }
+    // Some models report a part that isn't there as 0 ft at 0 s. Left in, those zeros would
+    // drag down the averages of the models that do see it, so they become missing values.
+    for (const prefix of Object.keys(PARTS).filter((part) => part !== 'wave')) {
+      const heights = models[modelId][`${prefix}HeightFt`];
+      const absent = (index) => !(heights[index] > 0);
+      for (const field of [`${prefix}HeightFt`, `${prefix}PeriodS`, `${prefix}DirectionDeg`]) {
+        models[modelId][field] = models[modelId][field].map((value, index) => (absent(index) ? null : value));
+      }
     }
   }
   return { times: hourly.time, models };
@@ -101,4 +117,20 @@ export async function fetchOpenMeteo(spots, settings) {
     ...parsed,
     wind: wind ? parseWindLocation(wind[index], parsed.times) : null,
   }));
+}
+
+// The forecasts each model made 1, 3 and 5 days before every hour of the last month, at
+// each point. One response per point, in the same order, for the track record (track.js).
+export async function fetchPreviousRuns(points, settings, fields) {
+  const json = await getJson(MARINE_URL, {
+    latitude: points.map((point) => point.lat).join(','),
+    longitude: points.map((point) => point.lon).join(','),
+    hourly: fields.join(','),
+    models: settings.models.map((model) => model.id).join(','),
+    past_days: 31,
+    forecast_days: 1,
+    timezone: settings.timezone,
+    length_unit: 'imperial',
+  });
+  return asList(json);
 }

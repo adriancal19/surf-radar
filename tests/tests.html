@@ -16,7 +16,7 @@
 
     <script type="module">
       import { buoys } from '../buoys.js';
-      import { windWarning } from '../src/wind.js';
+      import { windInfo } from '../src/wind.js';
       import { landPath, layoutPins, MAP_HEIGHT, MAP_WIDTH } from '../src/map.js';
       import { settings } from '../settings.js';
       import { spots } from '../spots.js';
@@ -29,8 +29,9 @@
       import { averageDirection, buildBuoyStatus, buildSpotForecast, localHourKey } from '../src/pipeline.js';
       import { ALL_DAY, applyView, bestDay, bestDayInRange, bestDayInView, bestTimeToGo, daysInView, DEFAULT_VIEW, keepKnownDates, toggleDate, formatDrive, formatDriveShort, restoreView, slotForTime } from '../src/filters.js';
       import { interpolate, isBlownOut, scoreConditions, scoreDay, toRating } from '../src/rating.js';
-      import { bodyLabel, chopNote, surfHeightFt, surfRange, windChopShare } from '../src/surf.js';
+      import { addSurfSeries, angleBetween, bodyLabel, chopNote, directionFactor, partSurfFt, surfAt, surfRange } from '../src/surf.js';
       import { parseMarineLocation, parseWindLocation } from '../src/sources/open-meteo.js';
+      import { dailyAverages, forecastByDay, LEADS, previousRunFields, trackRecord } from '../src/track.js';
 
       const results = [];
       const close = (a, b) => a !== null && b !== null && Math.abs(a - b) < 1e-9;
@@ -46,7 +47,7 @@
         );
 
       const profile = settings.profiles.adrian;
-      const score = (surfHeightFt, windChopShare = null, blownOut = false) => scoreConditions({ surfHeightFt, windChopShare, blownOut }, profile);
+      const score = (surfHeightFt, windChopShare = null, windEffect = 0, blownOut = false) => scoreConditions({ surfHeightFt, windChopShare, windEffect, blownOut }, profile);
       const rules = settings.confidence;
 
       // --- Blend ---
@@ -61,7 +62,7 @@
 
       // --- Rating ---
       same('rating: interpolate is flat before the first point', interpolate(profile.chopCurve, 0), 0.5);
-      same('rating: interpolate is flat after the last point', interpolate(profile.chopCurve, 1), -1.5);
+      same('rating: interpolate is flat after the last point', interpolate(profile.chopCurve, 1), -1);
       same('rating: under ankle high scores 1', score(0.9), 1);
       same('rating: clean swell can not lift a tiny day', score(0.9, 0), 1);
       same('rating: shin high is marginal', toRating(score(1.2)), 2);
@@ -73,18 +74,23 @@
       same('rating: big days stay capped at 5', score(12, 0), 5);
       same('rating: halfway between size points', score(1.25), 2);
       same('rating: mostly clean swell adds half a point', score(2, 0.2), 3.5);
-      same('rating: mostly wind chop takes off a point', score(2, 0.7), 2);
-      same('rating: almost all chop takes off a point and a half', score(2, 0.9), 1.5);
+      same('rating: mostly wind chop takes off half a point', score(2, 0.7), 2.5);
+      same('rating: almost all chop takes off a point', score(2, 0.9), 2);
       same('rating: an even mix leaves the score alone', score(2, 0.5), 3);
       same('rating: clean thigh high can reach good', toRating(score(2.2, 0.2)), 4);
       same('rating: choppy waist high drops to fair', toRating(score(2.7, 0.7)), 3);
-      same('rating: blown out caps a big day at 2', score(7, 0.9, true), 2);
-      same('rating: blown out never raises a small day', score(1.2, 0.9, true), 1);
-      same('rating: without the cap, a big choppy day would still rate 4', toRating(score(7, 0.9)), 4);
-      same('rating: blown out needs a wind warning', isBlownOut(0.9, null, profile), false);
-      same('rating: blown out needs mostly chop', isBlownOut(0.5, 'Onshore wind, may be choppy', profile), false);
-      same('rating: mostly chop with a wind warning is blown out', isBlownOut(0.7, 'Onshore wind, may be choppy', profile), true);
-      same('rating: unknown makeup is never blown out', isBlownOut(null, 'Strong wind, may be rough', profile), false);
+      same('rating: good wind adds its effect', score(2, null, 0.5), 3.5);
+      same('rating: clean swell and good wind together add half a point at most', score(2, 0.2, 0.5), 3.5);
+      same('rating: bad wind takes off its effect', score(2, null, -1), 2);
+      same('rating: chop and bad wind add up', score(2, 0.9, -1), 1);
+      same('rating: blown out caps a big day at 2', score(7, 0.9, -1, true), 2);
+      same('rating: blown out never raises a small day', score(1.2, 0.9, -1, true), 1);
+      same('rating: without the cap, a big blown-out day would still rate 3', toRating(score(7, 0.9, -1)), 3);
+      same('rating: blown out needs bad wind', isBlownOut(0.9, 0, profile), false);
+      same('rating: light onshore wind is not enough to blow it out', isBlownOut(0.9, -0.5, profile), false);
+      same('rating: blown out needs mostly chop', isBlownOut(0.5, -1, profile), false);
+      same('rating: mostly chop with onshore wind is blown out', isBlownOut(0.7, -1, profile), true);
+      same('rating: unknown makeup is never blown out', isBlownOut(null, -1.5, profile), false);
       same('rating: unknown makeup leaves the score alone', score(2, null), 3);
       same('rating: no surf estimate gives no score', score(null, 0.2), null);
       same('rating: morning counts 75%, midday 25%', scoreDay({ morning: { surfHeightFt: 5 }, midday: { surfHeightFt: 1.5 } }, profile), 4);
@@ -93,18 +99,48 @@
 
       // --- Surf estimate ---
       const surfRules = settings.surf;
-      same('surf: 8 s is the neutral period', surfHeightFt({ waveHeightFt: 4, wavePeriodS: 8 }, 1, surfRules), 4);
-      same('surf: the spot factor scales it', surfHeightFt({ waveHeightFt: 4, wavePeriodS: 8 }, 0.5, surfRules), 2);
-      same('surf: short periods shrink it', surfHeightFt({ waveHeightFt: 4, wavePeriodS: 6 }, 1, surfRules), 3.2);
-      same('surf: long periods grow it', surfHeightFt({ waveHeightFt: 4, wavePeriodS: 12 }, 1, surfRules), 5.2);
-      same('surf: periods past the curve stay flat', surfHeightFt({ waveHeightFt: 4, wavePeriodS: 18 }, 1, surfRules), 5.2);
-      same('surf: a missing period counts as neutral', surfHeightFt({ waveHeightFt: 4, wavePeriodS: null }, 1, surfRules), 4);
-      same('surf: no offshore height gives no surf', surfHeightFt({ waveHeightFt: null, wavePeriodS: 8 }, 1, surfRules), null);
-      check('surf: 7 ft of short-period chop at South Beach is about 2.5 ft', Math.abs(surfHeightFt({ waveHeightFt: 7, wavePeriodS: 6 }, spots.find((spot) => spot.id === 'south-beach').surfFactor, surfRules) - 2.52) < 0.01);
-      same('surf: chop share is by energy', windChopShare(2, 6), 0.9);
-      same('surf: all swell has no chop', windChopShare(3, 0), 0);
-      same('surf: unknown parts give an unknown share', windChopShare(null, 2), null);
-      same('surf: a flat sea gives an unknown share', windChopShare(0, 0), null);
+      const open = { surfFactor: 1, facingDeg: 90 };
+      same('surf: angles wrap around north', angleBetween(350, 10), 20);
+      same('surf: opposite directions are 180 apart', angleBetween(90, 270), 180);
+      same('surf: waves coming straight in count in full', directionFactor(90, 90), 1);
+      same('surf: an unknown direction counts in full', directionFactor(null, 90), 1);
+      same('surf: waves 60 degrees off count for less', directionFactor(30, 90), Math.SQRT1_2);
+      same('surf: waves running along the coast do not count', directionFactor(0, 90), 0);
+      same('surf: waves heading out to sea do not count', directionFactor(270, 90), 0);
+      same('surf: 8 s is the neutral period', partSurfFt(4, 8, 90, 90, surfRules), 4);
+      same('surf: short periods shrink it', partSurfFt(4, 6, 90, 90, surfRules), 3.2);
+      same('surf: long periods grow it', partSurfFt(4, 12, 90, 90, surfRules), 5.2);
+      same('surf: periods past the curve stay flat', partSurfFt(4, 18, 90, 90, surfRules), 5.2);
+      same('surf: a missing period counts as neutral', partSurfFt(4, null, 90, 90, surfRules), 4);
+      same('surf: an angled part counts for less', partSurfFt(4, 8, 30, 90, surfRules), 4 * Math.SQRT1_2);
+      same('surf: a 0 ft part gives nothing', partSurfFt(0, 8, 90, 90, surfRules), null);
+      same('surf: no height gives nothing', partSurfFt(null, 8, 90, 90, surfRules), null);
+      same('surf: without parts it uses the total', surfAt({ waveHeightFt: 4, wavePeriodS: 8 }, { surfFactor: 0.5, facingDeg: 90 }, surfRules), { surfHeightFt: 2, windChopShare: null });
+      same('surf: without any height there is no surf', surfAt({}, open, surfRules), { surfHeightFt: null, windChopShare: null });
+      const mixed = { waveHeightFt: 6.3, windWaveHeightFt: 6, windWavePeriodS: 8, windWaveDirectionDeg: 90, swellHeightFt: 2, swellPeriodS: 8, swellDirectionDeg: 90 };
+      same('surf: parts combine by energy', surfAt(mixed, open, surfRules).surfHeightFt, Math.sqrt(40));
+      same('surf: chop share is by energy', surfAt(mixed, open, surfRules).windChopShare, 0.9);
+      same('surf: the spot factor scales the parts', surfAt(mixed, { surfFactor: 0.5, facingDeg: 90 }, surfRules).surfHeightFt, Math.sqrt(40) / 2);
+      same('surf: chop blowing out to sea does not count', surfAt({ ...mixed, windWaveDirectionDeg: 270 }, open, surfRules), { surfHeightFt: 2, windChopShare: 0 });
+      same('surf: a 0 ft swell part is left out', surfAt({ ...mixed, swellHeightFt: 0 }, open, surfRules), { surfHeightFt: 6, windChopShare: 1 });
+      same('surf: the beach direction matters', surfAt({ waveHeightFt: 4, wavePeriodS: 8, waveDirectionDeg: 30 }, { surfFactor: 1, facingDeg: 30 }, surfRules).surfHeightFt, 4);
+      // Real 10 am readings from Nov 17, 2026, when the cams showed South Beach about 2–3 ft and
+      // the Juno Beach Pier (near Jupiter) head high and over. The middle model should agree.
+      const middleSurf = (readings, id) => readings.map((reading) => surfAt(reading, spots.find((spot) => spot.id === id), surfRules).surfHeightFt).sort((x, y) => x - y)[1];
+      const southBeachNov17 = middleSurf([
+        { windWaveHeightFt: 3.346, windWavePeriodS: 4.55, windWaveDirectionDeg: 100, swellHeightFt: 3.346, swellPeriodS: 5.7, swellDirectionDeg: 75, secondarySwellHeightFt: 1.706, secondarySwellPeriodS: 6.45, secondarySwellDirectionDeg: 53 },
+        { windWaveHeightFt: 7.48, windWavePeriodS: 7.3, windWaveDirectionDeg: 53, swellHeightFt: 0, swellPeriodS: 0, swellDirectionDeg: 0 },
+        { waveHeightFt: 9.121, wavePeriodS: 6.55, waveDirectionDeg: 66 },
+      ], 'south-beach');
+      const jupiterNov17 = middleSurf([
+        { windWaveHeightFt: 7.415, windWavePeriodS: 5.55, windWaveDirectionDeg: 75, swellHeightFt: 2.953, swellPeriodS: 6.75, swellDirectionDeg: 15, secondarySwellHeightFt: 1.969, secondarySwellPeriodS: 6.95, secondarySwellDirectionDeg: 27 },
+        { windWaveHeightFt: 8.596, windWavePeriodS: 7.3, windWaveDirectionDeg: 61 },
+        { waveHeightFt: 10.039, wavePeriodS: 6.7, waveDirectionDeg: 72 },
+      ], 'jupiter-inlet');
+      check('surf: South Beach on Nov 17 matches its cam (2–3 ft)', southBeachNov17 >= 2 && southBeachNov17 < 3.5, `got ${southBeachNov17}`);
+      check('surf: Jupiter on Nov 17 matches the Juno cams (head high and over)', jupiterNov17 >= 5 && jupiterNov17 < 7, `got ${jupiterNov17}`);
+      check('spots: every spot faces somewhere between northeast and southeast', spots.every((spot) => spot.facingDeg >= 45 && spot.facingDeg <= 135));
+      same('surf: series are added for every hour', addSurfSeries({ m: { waveHeightFt: [4, null], wavePeriodS: [8, 8] } }, open, surfRules).m.surfHeightFt, [4, null]);
       same('surf: ranges are whole feet', surfRange(2.5), '2–3 ft');
       same('surf: a range is never a single number', surfRange(1.1), '1–2 ft');
       same('surf: the range brackets the estimate', surfRange(1.9), '1–2 ft');
@@ -137,9 +173,14 @@
       same('confidence: big disagreement drops Day 4 to low', label(4, 2.5), LOW);
 
       // --- Open-Meteo format ---
-      const singleModel = { hourly: { time: ['t0'], wave_height: [3], swell_wave_period: [8], wave_period: [6] } };
-      same('source: reads unsuffixed fields with one model', parseMarineLocation(singleModel, ['a']).models.a, { waveHeightFt: [3], wavePeriodS: [6], swellHeightFt: [null], swellPeriodS: [8], windWaveHeightFt: [null], windWavePeriodS: [null] });
+      const singleModel = { hourly: { time: ['t0'], wave_height: [3], swell_wave_height: [2], swell_wave_period: [8], wave_period: [6] } };
+      const oneModel = parseMarineLocation(singleModel, ['a']).models.a;
+      same('source: reads unsuffixed fields with one model', [oneModel.waveHeightFt, oneModel.wavePeriodS, oneModel.swellPeriodS], [[3], [6], [8]]);
+      same('source: fields the response lacks become empty values', [oneModel.windWaveHeightFt, oneModel.waveDirectionDeg, oneModel.tertiarySwellPeriodS], [[null], [null], [null]]);
       const twoModels = { hourly: { time: ['t0'], wave_height_a: [3], swell_wave_period_a: [8], wave_period_a: [6], wave_height_b: [4], wave_period_b: [7] } };
+      const zeroPart = parseMarineLocation({ hourly: { time: ['t0', 't1'], swell_wave_height: [0, 2], swell_wave_period: [0, 9], swell_wave_direction: [0, 60] } }, ['a']).models.a;
+      same('source: a 0 ft part becomes missing, period and direction too', [zeroPart.swellHeightFt, zeroPart.swellPeriodS, zeroPart.swellDirectionDeg], [[null, 2], [null, 9], [null, 60]]);
+      same('source: the total is kept even at 0 ft', parseMarineLocation({ hourly: { time: ['t0'], wave_height: [0] } }, ['a']).models.a.waveHeightFt, [0]);
       same('source: reads suffixed fields with two models', parseMarineLocation(twoModels, ['a', 'b']).models.b.waveHeightFt, [4]);
       same('source: a field a model lacks becomes empty values', parseMarineLocation(twoModels, ['a', 'b']).models.b.swellPeriodS, [null]);
       same(
@@ -474,18 +515,30 @@
       same('alerts: drops old records', Object.keys(pruneSent({ old: '2026-09-01T00:00:00Z' }, alertNow)), []);
 
       // --- Wind warning ---
-      const windRules = settings.windWarning;
-      same('wind: light onshore wind is fine', windWarning({ speedMph: 8, directionDeg: 90 }, windRules), null);
-      same('wind: onshore at the limit warns', windWarning({ speedMph: 12, directionDeg: 90 }, windRules), 'Onshore wind, may be choppy');
-      same('wind: the edge of onshore counts', windWarning({ speedMph: 15, directionDeg: 30 }, windRules), 'Onshore wind, may be choppy');
-      same('wind: moderate offshore wind is fine', windWarning({ speedMph: 15, directionDeg: 270 }, windRules), null);
-      same('wind: strong wind warns from any direction', windWarning({ speedMph: 22, directionDeg: 270 }, windRules), 'Strong wind, may be rough');
-      same('wind: missing speed gives no warning', windWarning({ speedMph: null, directionDeg: 90 }, windRules), null);
-      same('wind: missing direction only warns if strong', windWarning({ speedMph: 15, directionDeg: null }, windRules), null);
+      const windRules = settings.wind;
+      const feel = (speedMph, directionDeg, facingDeg = 90) => windInfo({ speedMph, directionDeg }, facingDeg, windRules);
+      same('wind: light wind is calm from any direction', [feel(4, 90).kind, feel(4, 90).effect], ['light', 0.5]);
+      same('wind: light onshore wind costs half a point', [feel(8, 90).kind, feel(8, 90).effect, feel(8, 90).warning], ['onshore', -0.5, 'Light onshore wind, a bit bumpy']);
+      same('wind: onshore at the breezy limit costs a point', [feel(12, 90).effect, feel(12, 90).warning], [-1, 'Onshore wind, may be choppy']);
+      same('wind: strong onshore wind costs more', feel(22, 90).effect, -1.5);
+      same('wind: 60 degrees off still counts as onshore', feel(15, 30).kind, 'onshore');
+      same('wind: offshore wind helps', [feel(15, 270).kind, feel(15, 270).effect, feel(15, 270).good], ['offshore', 0.5, 'Offshore wind, clean faces']);
+      same('wind: strong offshore wind stops helping', [feel(25, 270).effect, feel(25, 270).warning], [0, 'Strong offshore wind, hard to paddle']);
+      same('wind: gentle cross-shore wind is neutral', [feel(8, 0).kind, feel(8, 0).effect, feel(8, 0).warning], ['cross-shore', 0, null]);
+      same('wind: breezy cross-shore wind costs half a point', feel(15, 0).effect, -0.5);
+      same('wind: strong cross-shore wind costs a point', [feel(22, 0).effect, feel(22, 0).warning], [-1, 'Strong wind, may be rough']);
+      same('wind: the beach direction decides the kind', [feel(15, 60, 60).kind, feel(15, 60, 150).kind], ['onshore', 'cross-shore']);
+      same('wind: missing speed gives nothing', feel(null, 90), null);
+      same('wind: missing direction is judged as cross-shore', feel(15, null).kind, 'cross-shore');
       const windyData = { ...data, wind: { speedMph: times.map(() => 15), directionDeg: times.map(() => 90) } };
       const windyForecast = buildSpotForecast({ id: 'test' }, windyData, settings, '2026-11-06T07:00');
       same('wind: warnings reach each slot', windyForecast.days[0].slots.morning.windWarning, 'Onshore wind, may be choppy');
-      same('wind: the warning does not change the rating', windyForecast.days[0].slots.morning.score, firstDay.slots.morning.score);
+      same('wind: the kind reaches each slot', windyForecast.days[0].slots.morning.windKind, 'onshore');
+      same('wind: onshore wind lowers the rating', windyForecast.days[0].slots.morning.score, firstDay.slots.morning.score - 1);
+      const offshoreForecast = buildSpotForecast({ id: 'test' }, { ...data, wind: { speedMph: times.map(() => 10), directionDeg: times.map(() => 270) } }, settings, '2026-11-06T07:00');
+      same('wind: offshore wind lifts the rating', offshoreForecast.days[0].slots.morning.score, firstDay.slots.morning.score + 0.5);
+      same('wind: good wind reaches each slot', offshoreForecast.days[0].slots.morning.windGood, 'Offshore wind, clean faces');
+      same('wind: the beach direction comes from the spot', buildSpotForecast({ id: 'test', facingDeg: 270 }, windyData, settings, '2026-11-06T07:00').days[0].slots.morning.windKind, 'offshore');
       const choppyModels = { only: { ...data.models.only, swellHeightFt: times.map(() => 1), windWaveHeightFt: times.map(() => 6) } };
       const blownDay = buildSpotForecast({ id: 'test' }, { ...windyData, models: choppyModels }, settings, '2026-11-06T07:00').days[0];
       same('wind: mostly chop plus onshore wind is blown out', blownDay.slots.morning.final.blownOut, true);
@@ -528,6 +581,39 @@
       const lateDay = fakeDay(0, 1, 1, 5); lateDay.slots.evening.tooLate = true;
       same('time: all day skips a window too late to reach', slotForTime(lateDay, ALL_DAY).name, 'morning');
       same('time: look-ahead skips a window too late to reach', bestDay([lateDay, fakeDay(1, 1, 1, 3)], 'evening').day.dayIndex, 1);
+      // --- Track record ---
+      // 11:00 and 16:00 UTC are 6 am and 11 am in Miami in November; 02:00 UTC is 9 pm the night before.
+      const daily = dailyAverages([
+        { time: '2026-11-18T16:00:00Z', waveHeightFt: 4 },
+        { time: '2026-11-18T11:00:00Z', waveHeightFt: 2 },
+        { time: '2026-11-18T02:00:00Z', waveHeightFt: 99 },
+        { time: '2026-11-17T15:00:00Z', waveHeightFt: null },
+      ], 'America/New_York');
+      same('track: buoy days average daytime readings in local time', daily, { '2026-11-18': { ft: 3, count: 2 } });
+      same('track: asks for the forecasts made 1, 3 and 5 days before', previousRunFields(), ['wave_height_previous_day1', 'wave_height_previous_day3', 'wave_height_previous_day5']);
+      const previousHourly = {
+        time: ['2026-11-18T05:00', '2026-11-18T06:00', '2026-11-18T07:00'],
+        wave_height_previous_day1_a: [99, 2, 4], wave_height_previous_day1_b: [99, 3, 5], wave_height_previous_day1_c: [99, 10, null],
+        wave_height_previous_day3_a: [null, null, null],
+      };
+      const byDay = forecastByDay(previousHourly, ['a', 'b', 'c']);
+      same('track: each hour takes the middle model, each day its daytime average', byDay[1], { '2026-11-18': 3.75 });
+      same('track: a lead with no data has no days', byDay[3], {});
+      const pair = (forecast, measured) => ({ forecast: { 1: forecast, 3: {}, 5: {} }, measured });
+      const record = trackRecord([
+        pair({ '2026-11-17': 5, '2026-11-18': 2, '2026-11-19': 9, '2026-11-20': 9 }, {
+          '2026-11-17': { ft: 4, count: 20 },
+          '2026-11-18': { ft: 3, count: 20 },
+          '2026-11-19': { ft: 3, count: 2 },
+          '2026-11-20': { ft: 3, count: 20 },
+        }),
+      ], '2026-11-20');
+      same('track: the miss is the average size of the error', record[0].missFt, 1);
+      same('track: the lean is the average signed error', record[0].biasFt, 0);
+      same('track: days with few buoy readings and today are left out', record[0].days, 2);
+      same('track: a lead with nothing to compare has no score', record[1], { lead: 3, missFt: null, biasFt: null, days: 0 });
+      same('track: one row per lead', record.map((row) => row.lead), LEADS);
+
       // --- Map ---
       const pins = layoutPins(spots);
       same('map: every spot gets a pin', pins.length, spots.length);
